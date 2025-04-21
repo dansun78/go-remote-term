@@ -1,0 +1,34 @@
+# Binary output
+/go-remote-term
+/go-remote-term.exe
+
+# Go build and test files
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+*.prof
+
+# Go workspace files
+/go.work
+
+# IDE specific files
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Dependency directories
+/vendor/
+
+# Log files
+*.log
+
+# Environment variables
+.env
+
+# OS specific
+Thumbs.db

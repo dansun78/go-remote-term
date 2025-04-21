@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Go Remote Terminal</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Go Remote Terminal</h1>
+        <div class="terminal-container">
+            <div class="terminal" id="terminal"></div>
+            <div class="input-hint">Click terminal to focus and type</div>
+        </div>
+        <div class="status" id="status">Disconnected</div>
+        <div class="controls">
+            <button id="connectBtn">Connect</button>
+            <button id="disconnectBtn" disabled>Disconnect</button>
+        </div>
+        <div class="instructions">
+            <h3>Usage Instructions:</h3>
+            <ul>
+                <li>Click "Connect" to start a terminal session</li>
+                <li>Click inside the terminal area to focus and begin typing</li>
+                <li>Use standard keyboard shortcuts (Ctrl+C, Ctrl+D, etc.)</li>
+                <li>Press "Disconnect" when done</li>
+            </ul>
+        </div>
+    </div>
+    <script src="terminal.js"></script>
+</body>
+</html>
