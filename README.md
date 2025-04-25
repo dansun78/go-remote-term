@@ -39,16 +39,24 @@ go build -o go-remote-term
 
 ## Usage
 
-### Running with HTTP (default)
+### Running with HTTP (default, localhost only)
 
 ```bash
 ./go-remote-term
 ```
 
-By default, the server will start on port 8080. You can access the terminal by opening a browser and navigating to:
+By default, the server will start on port 8080 and only accept connections from localhost for security. You can access the terminal by opening a browser and navigating to:
 
 ```
 http://localhost:8080
+```
+
+### Running with HTTP (allow remote connections)
+
+To allow connections from any host (not just localhost):
+
+```bash
+./go-remote-term -insecure
 ```
 
 ### Running with HTTPS
@@ -65,20 +73,41 @@ Then access the terminal via:
 https://localhost:8443
 ```
 
+### Enforcing HTTPS
+
+To enforce HTTPS usage (recommended for production):
+
+```bash
+./go-remote-term -secure -cert=/path/to/cert.pem -key=/path/to/key.pem
+```
+
+If you don't provide certificate and key files with the -secure flag, the application will automatically generate a self-signed certificate:
+
+```bash
+./go-remote-term -secure
+```
+
+**Note**: Browsers will display a security warning when using self-signed certificates. This is normal and you can proceed by accepting the risk. For production environments, use proper certificates from a trusted certificate authority.
+
 ### Command Line Options
 
 - `-addr`: HTTP/HTTPS service address (default: ":8080")
 - `-cert`: TLS certificate file path (for HTTPS)
 - `-key`: TLS key file path (for HTTPS)
+- `-secure`: Force HTTPS usage, generates self-signed cert if not provided (default: false)
+- `-insecure`: Allow connections from any host, not just localhost (default: false)
 
 ## Security Considerations
 
-This application is designed for development and controlled environments. For production use, consider implementing:
+The application includes built-in security measures:
+- HTTP access is restricted to localhost by default
+- Option to force HTTPS for all connections
+- WebSocket connections follow the same security rules
 
+For production use, consider implementing additional security:
 - User authentication
-- Connection encryption (HTTPS)
 - Access control
-- IP filtering
+- IP filtering beyond localhost restriction
 - Session timeouts
 
 ## Project Structure
