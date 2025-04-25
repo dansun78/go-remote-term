@@ -18,16 +18,21 @@ var (
 func main() {
 	flag.Parse()
 
-	// Serve static files
-	fs := http.FileServer(http.Dir("./static"))
-	http.Handle("/", fs)
+	// Get embedded static files
+	staticFS, err := GetStaticFS()
+	if err != nil {
+		log.Fatal("Failed to access static files: ", err)
+	}
+
+	// Serve embedded static files
+	http.Handle("/", http.FileServer(http.FS(staticFS)))
 
 	// Terminal WebSocket handler
 	http.HandleFunc("/ws", terminal.HandleWebSocket)
 
 	// Start the server
 	fmt.Printf("Starting remote terminal server on %s\n", *addr)
-	var err error
+
 	if *certFile != "" && *keyFile != "" {
 		fmt.Println("Using HTTPS")
 		err = http.ListenAndServeTLS(*addr, *certFile, *keyFile, nil)

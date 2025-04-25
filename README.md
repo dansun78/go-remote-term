@@ -12,6 +12,7 @@ Go Remote Terminal is a Go-based application that launches a shell and exposes i
 - WebSocket-based communication for real-time interaction
 - Support for both HTTP and HTTPS connections
 - Interactive web terminal interface
+- Single binary deployment with embedded web assets
 - Support for common terminal features:
   - Command history (arrow keys)
   - Tab completion
@@ -33,7 +34,7 @@ git clone https://github.com/dansun78/go-remote-term.git
 cd go-remote-term
 
 # Build the application
-go build -o go-remote-term ./cmd/main.go
+go build -o go-remote-term
 ```
 
 ## Usage
@@ -84,17 +85,17 @@ This application is designed for development and controlled environments. For pr
 
 ```
 go-remote-term/
-├── cmd/
-│   └── main.go           # Application entry point
+├── assets.go            # Embeds static files into the binary
+├── main.go              # Application entry point
 ├── internal/
 │   └── terminal/
-│       └── terminal.go   # Terminal handling and WebSocket logic
+│       └── terminal.go  # Terminal handling and WebSocket logic
 ├── static/
-│   ├── index.html        # Web interface HTML
-│   ├── style.css         # Terminal styling
-│   └── terminal.js       # Terminal frontend JavaScript
-├── go.mod                # Go module definition
-└── go.sum                # Go module checksums
+│   ├── index.html       # Web interface HTML
+│   ├── style.css        # Terminal styling
+│   └── terminal.js      # Terminal frontend JavaScript
+├── go.mod               # Go module definition
+└── go.sum               # Go module checksums
 ```
 
 ## Dependencies
