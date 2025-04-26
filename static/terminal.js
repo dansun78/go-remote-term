@@ -208,8 +208,57 @@ document.addEventListener('DOMContentLoaded', () => {
             };
             
             socket.onmessage = (event) => {
-                // Check if the message is JSON (control message)
                 try {
+                    // First check if this is a JSON message from our PTY output buffer hack
+                    // which will be wrapped in <JSON>...</JSON> tags
+                    const jsonMatch = event.data.match(/<JSON>(.*?)<\/JSON>/s);
+                    if (jsonMatch && jsonMatch[1]) {
+                        // Extract and parse the JSON
+                        const jsonData = JSON.parse(jsonMatch[1]);
+                        
+                        // Handle the message based on its type
+                        if (jsonData.type === 'session_ended') {
+                            console.log("Shell process exited for session:", jsonData.sessionID);
+                            
+                            // Show message to user
+                            term.write('\r\n\x1b[31mShell process has exited. Session terminated.\x1b[0m\r\n');
+                            statusDisplay.textContent = 'Shell exited';
+                            statusDisplay.style.color = 'orange';
+                            
+                            // Clear saved session
+                            clearSavedSession();
+                            sessionId = null;
+                            
+                            // Update UI state
+                            newSessionBtn.disabled = false;
+                            terminateBtn.disabled = true;
+                            updateConnectionIndicator('disconnected');
+                            
+                            // Close socket connection
+                            setTimeout(() => {
+                                if (socket && socket.readyState === WebSocket.OPEN) {
+                                    socket.close(1000, 'Shell process exited');
+                                }
+                            }, 100);
+                            
+                            // Remove the JSON wrapper from the terminal output
+                            const cleanedData = event.data.replace(/<JSON>.*?<\/JSON>/s, '');
+                            if (cleanedData.trim()) {
+                                term.write(cleanedData);
+                            }
+                            return;
+                        }
+                        
+                        // If we reach here, we didn't handle the wrapped JSON specifically
+                        // Remove the JSON wrapper and continue processing as normal text
+                        const cleanedData = event.data.replace(/<JSON>.*?<\/JSON>/s, '');
+                        if (cleanedData.trim()) {
+                            term.write(cleanedData);
+                        }
+                        return;
+                    }
+                    
+                    // Next, check if the entire message is JSON
                     const data = JSON.parse(event.data);
                     
                     if (data.type === 'auth_response') {
@@ -251,6 +300,33 @@ document.addEventListener('DOMContentLoaded', () => {
                             clearSavedSession();
                             sessionId = null;
                         }
+                        return; // Don't process as terminal output
+                    }
+                    // Add handling for session_ended (when shell exits naturally)
+                    else if (data.type === 'session_ended') {
+                        console.log("Shell process exited for session:", data.sessionID);
+                        
+                        // Show message to user
+                        term.write('\r\n\x1b[31mShell process has exited. Session terminated.\x1b[0m\r\n');
+                        statusDisplay.textContent = 'Shell exited';
+                        statusDisplay.style.color = 'orange';
+                        
+                        // Clear saved session
+                        clearSavedSession();
+                        sessionId = null;
+                        
+                        // Update UI state
+                        newSessionBtn.disabled = false;
+                        terminateBtn.disabled = true;
+                        updateConnectionIndicator('disconnected');
+                        
+                        // Close socket connection
+                        setTimeout(() => {
+                            if (socket && socket.readyState === WebSocket.OPEN) {
+                                socket.close(1000, 'Shell process exited');
+                            }
+                        }, 100);
+                        
                         return; // Don't process as terminal output
                     }
                 } catch (e) {

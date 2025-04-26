@@ -293,7 +293,48 @@ func bufferTerminalOutput(session *TerminalSession) {
 			if err != nil {
 				if err != io.EOF {
 					log.Printf("Error reading from PTY (session %s): %v", session.ID, err)
+				} else {
+					log.Printf("Shell exited for session %s (EOF detected)", session.ID)
 				}
+
+				// When we get EOF or any other error, the shell has likely exited
+				// Send notification first, then terminate the session
+				go func(sessionID string, s *TerminalSession) {
+					log.Printf("Broadcasting shell exit notification for session %s", sessionID)
+
+					// Create termination notification message
+					notification := Response{
+						Type:      "session_ended",
+						Success:   false,
+						Message:   "Shell process has exited",
+						SessionID: sessionID,
+					}
+
+					notificationBytes, _ := json.Marshal(notification)
+
+					// Send the notification through the session's output buffer
+					// while it still exists
+					s.Lock.Lock()
+					connections := s.Connections
+
+					if connections > 0 && s.OutputBuffer != nil {
+						log.Printf("Broadcasting to %d connections", connections)
+						// We'll wrap our JSON in a special marker so it's recognized as JSON
+						// This is needed because we're adding it to the output buffer
+						wrappedMessage := append([]byte("\n<JSON>"), notificationBytes...)
+						wrappedMessage = append(wrappedMessage, []byte("</JSON>\n")...)
+						s.OutputBuffer.Write(wrappedMessage)
+					}
+					s.Lock.Unlock()
+
+					// Give some time for notification to be sent before terminating session
+					time.Sleep(500 * time.Millisecond)
+
+					// Now terminate the session
+					log.Printf("Automatically terminating session %s due to shell exit", sessionID)
+					terminateSession(sessionID)
+				}(session.ID, session)
+
 				return
 			}
 
@@ -615,4 +656,50 @@ func indexOf(s, substr string) int {
 		}
 	}
 	return -1
+}
+
+// broadcastSessionTerminated notifies all connected clients that a session has ended
+func broadcastSessionTerminated(sessionID string) {
+	sessionsLock.Lock()
+	session, exists := sessions[sessionID]
+	if !exists {
+		sessionsLock.Unlock()
+		return
+	}
+
+	// Create termination notification message
+	notification := Response{
+		Type:      "session_ended",
+		Success:   false,
+		Message:   "Shell process has exited",
+		SessionID: sessionID,
+	}
+
+	notificationBytes, _ := json.Marshal(notification)
+
+	// Keep track of the session's connection count - we'll access it with the lock released
+	connections := session.Connections
+	sessionsLock.Unlock()
+
+	// If there are active connections, we need to notify them
+	if connections > 0 {
+		log.Printf("Broadcasting shell exit notification for session %s to %d connections",
+			sessionID, connections)
+
+		// We need to send the termination notification through the PTY output buffer
+		// This is a bit of a hack, but it ensures that all connected clients receive it
+		// through their normal WebSocket output channel
+		session.Lock.Lock()
+		if session.OutputBuffer != nil {
+			// We'll wrap our JSON in a special marker so it's recognized as JSON
+			// This is needed because we're adding it to the output buffer
+			wrappedMessage := append([]byte("\n<JSON>"), notificationBytes...)
+			wrappedMessage = append(wrappedMessage, []byte("</JSON>\n")...)
+			session.OutputBuffer.Write(wrappedMessage)
+		}
+		session.LastActive = time.Now()
+		session.Lock.Unlock()
+	} else {
+		log.Printf("No active connections for session %s, skipping termination broadcast", sessionID)
+	}
 }
