@@ -1,5 +1,5 @@
 document.addEventListener('DOMContentLoaded', () => {
-    const terminal = document.getElementById('terminal');
+    const terminalElement = document.getElementById('terminal');
     const statusDisplay = document.getElementById('status');
     const sessionInfo = document.getElementById('sessionInfo');
     const connectionIndicator = document.getElementById('connectionIndicator');
@@ -12,22 +12,27 @@ document.addEventListener('DOMContentLoaded', () => {
     const maxReconnectAttempts = 5;
     let reconnectTimer = null;
     
-    // Make terminal div focusable
-    terminal.tabIndex = 0;
-    
-    // Focus terminal on click
-    terminal.addEventListener('click', () => {
-        terminal.focus();
+    // Initialize xterm.js
+    const term = new Terminal({
+        cursorBlink: true,
+        theme: {
+            background: '#000',
+            foreground: '#0f0',
+            cursor: '#0f0'
+        },
+        allowTransparency: true,
+        fontFamily: 'Courier New, monospace',
+        fontSize: 14,
+        scrollback: 1000
     });
     
-    // Show focus indicator
-    terminal.addEventListener('focus', () => {
-        terminal.style.outline = '2px solid #4CAF50';
-    });
+    // Initialize the fit addon to resize the terminal
+    const fitAddon = new FitAddon.FitAddon();
+    term.loadAddon(fitAddon);
     
-    terminal.addEventListener('blur', () => {
-        terminal.style.outline = 'none';
-    });
+    // Open the terminal
+    term.open(terminalElement);
+    fitAddon.fit();
     
     // Helper function to get a cookie value
     function getCookie(name) {
@@ -154,6 +159,11 @@ document.addEventListener('DOMContentLoaded', () => {
         updateConnectionIndicator('reconnecting');
         newSessionBtn.disabled = true;
         
+        // Clear the terminal if this is a new session
+        if (!existingSessionId) {
+            term.clear();
+        }
+        
         // Create new WebSocket connection
         try {
             socket = new WebSocket(wsUrl);
@@ -225,14 +235,9 @@ document.addEventListener('DOMContentLoaded', () => {
                         statusDisplay.style.color = 'green';
                         updateConnectionIndicator('connected');
                         
-                        // Only clear terminal if it's a new session (not a reconnection)
-                        if (!existingSessionId) {
-                            terminal.textContent = '';
-                        }
-                        
                         newSessionBtn.disabled = false;
                         terminateBtn.disabled = false;
-                        terminal.focus();
+                        term.focus();
                         return; // Don't process auth responses as terminal output
                     } 
                     // Add handling for terminate_response
@@ -248,13 +253,29 @@ document.addEventListener('DOMContentLoaded', () => {
                     }
                 } catch (e) {
                     // Not JSON, treat as normal terminal output
+                    // Simply write raw data to the terminal - xterm.js handles ANSI codes
+                    term.write(event.data);
                 }
-                
-                const text = event.data;
-                // Process terminal output with ANSI handling
-                processTerminalOutput(text);
-                terminal.scrollTop = terminal.scrollHeight; // Auto-scroll to bottom
             };
+            
+            // Handle terminal input
+            term.onData(data => {
+                if (socket && socket.readyState === WebSocket.OPEN) {
+                    socket.send(data);
+                }
+            });
+            
+            // Handle terminal resize
+            term.onResize(size => {
+                if (socket && socket.readyState === WebSocket.OPEN && sessionId) {
+                    socket.send(JSON.stringify({
+                        type: 'resize',
+                        rows: size.rows,
+                        cols: size.cols
+                    }));
+                }
+            });
+            
         } catch (error) {
             console.error('Failed to connect:', error);
             statusDisplay.textContent = 'Connection failed';
@@ -264,67 +285,12 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
     
-    // Handle various terminal control sequences
-    function processTerminalOutput(text) {
-        // Filter out problematic sequences
-        let processedText = text;
-        
-        // Filter out bracketed paste mode sequences (including the caret representation)
-        processedText = processedText.replace(/\^\[\[\?2004[hl]/g, '');  // ^[[?2004h or ^[[?2004l
-        processedText = processedText.replace(/\[\?2004[hl]/g, '');      // [?2004h or [?2004l
-        
-        // Check if we're getting ANSI color/formatting codes
-        if (processedText.includes('\x1b[') || processedText.includes('^[')) {
-            // Convert the ANSI escape sequences to plain text
-            // This simple approach removes ANSI codes rather than interpreting them
-            processedText = processedText.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, ''); // Remove standard ANSI sequences
-            processedText = processedText.replace(/\^\[\[[0-9;]*[a-zA-Z]/g, ''); // Remove caret representation
-        }
-        
-        // Handle other control characters
-        processedText = processedText.replace(/\x1b/g, ''); // Remove ESC character
-        
-        // Handle terminal title sequences (common in bash)
-        processedText = processedText.replace(/\]0;.*?\x07/g, '');
-        
-        // Ensure we handle HTML line breaks properly for output rendering
-        processedText = processedText.replace(/\r\n/g, '\n'); // Normalize line endings
-        
-        // Append the processed text to terminal
-        if (processedText.length > 0) {
-            terminal.textContent += processedText;
-        }
-    }
-    
-    // Handle window resize to update terminal size
+    // Handle window resize to resize the terminal
     window.addEventListener('resize', () => {
-        if (socket && socket.readyState === WebSocket.OPEN && sessionId) {
-            // Calculate terminal size based on character dimensions
-            const testChar = document.createElement('span');
-            testChar.textContent = 'X';
-            testChar.style.visibility = 'hidden';
-            terminal.appendChild(testChar);
-            
-            const charWidth = testChar.getBoundingClientRect().width;
-            const charHeight = testChar.getBoundingClientRect().height;
-            
-            terminal.removeChild(testChar);
-            
-            const rows = Math.floor(terminal.clientHeight / charHeight);
-            const cols = Math.floor(terminal.clientWidth / charWidth);
-            
-            if (rows > 0 && cols > 0) {
-                // Send resize message
-                socket.send(JSON.stringify({
-                    type: 'resize',
-                    rows: rows,
-                    cols: cols
-                }));
-            }
-        }
+        fitAddon.fit();
     });
     
-    // Handle session termination (renamed from disconnect)
+    // Handle session termination
     terminateBtn.addEventListener('click', () => {
         // Clear reconnection logic
         clearTimeout(reconnectTimer);
@@ -381,70 +347,6 @@ document.addEventListener('DOMContentLoaded', () => {
         
         // Connect with no session ID to get a fresh session
         connectToTerminal();
-    });
-    
-    // Handle keyboard input
-    terminal.addEventListener('keydown', (e) => {
-        if (!socket || socket.readyState !== WebSocket.OPEN) return;
-        
-        // Convert key combination to terminal control sequences
-        let data = '';
-        
-        if (e.key === 'Enter') {
-            data = '\r';  // Send carriage return only - PTY will handle line feed
-            e.preventDefault();
-        } else if (e.key === 'Backspace') {
-            data = '\x7F';  // DEL character for better bash compatibility
-            e.preventDefault();
-        } else if (e.key === 'Tab') {
-            data = '\t';
-            e.preventDefault(); // Prevent tab from changing focus
-        } else if (e.key === 'Escape') {
-            data = '\x1B';
-            e.preventDefault();
-        } else if (e.key === 'ArrowUp') {
-            data = '\x1B[A';
-            e.preventDefault();
-        } else if (e.key === 'ArrowDown') {
-            data = '\x1B[B';
-            e.preventDefault();
-        } else if (e.key === 'ArrowRight') {
-            data = '\x1B[C';
-            e.preventDefault();
-        } else if (e.key === 'ArrowLeft') {
-            data = '\x1B[D';
-            e.preventDefault();
-        } else if (e.ctrlKey) {
-            // Handle Ctrl+key combinations more precisely
-            if (e.key.length === 1) {
-                const keyCode = e.key.toUpperCase().charCodeAt(0);
-                if (keyCode >= 65 && keyCode <= 90) { // A-Z
-                    data = String.fromCharCode(keyCode - 64);
-                    e.preventDefault();
-                }
-            } else if (e.key === 'c') {
-                data = '\x03'; // Ctrl+C (ETX)
-                e.preventDefault();
-            } else if (e.key === 'd') {
-                data = '\x04'; // Ctrl+D (EOT)
-                e.preventDefault();
-            } else if (e.key === 'z') {
-                data = '\x1A'; // Ctrl+Z (SUB)
-                e.preventDefault();
-            }
-        } else if (e.key.length === 1) {
-            // Regular character input
-            data = e.key;
-        }
-        
-        if (data && socket.readyState === WebSocket.OPEN) {
-            socket.send(data);
-        }
-    });
-    
-    // Make sure we capture all keyboard events
-    terminal.addEventListener('keypress', (e) => {
-        e.preventDefault(); // Prevent default to handle all input manually
     });
     
     // Handle beforeunload event to warn about active sessions

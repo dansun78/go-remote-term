@@ -18,23 +18,21 @@ h1 {
 .terminal-container {
     position: relative;
     margin-bottom: 10px;
-}
-
-.terminal {
-    background-color: #000;
-    color: #0f0;
-    padding: 10px;
     height: 400px;
-    overflow-y: auto;
     border-radius: 5px;
-    font-family: 'Courier New', monospace;
-    white-space: pre-wrap;
-    word-break: break-all;
-    cursor: text;
+    overflow: hidden;
+    border: 1px solid #333;
 }
 
-.terminal:focus {
-    outline: 2px solid #4CAF50;
+/* Make the terminal div fill its container for xterm.js */
+.terminal {
+    height: 100%;
+    width: 100%;
+}
+
+/* Override xterm.js styles to match our theme */
+.xterm-viewport {
+    background-color: #000 !important;
 }
 
 .input-hint {
@@ -48,10 +46,7 @@ h1 {
     font-size: 12px;
     opacity: 0.7;
     transition: opacity 0.3s;
-}
-
-.terminal:focus + .input-hint {
-    opacity: 0;
+    z-index: 10;
 }
 
 .connection-indicator {
@@ -62,6 +57,7 @@ h1 {
     height: 12px;
     border-radius: 50%;
     background-color: #ff3333; /* Red for disconnected */
+    z-index: 10;
 }
 
 .connection-indicator.connected {
@@ -126,11 +122,11 @@ button:disabled {
     background-color: #0b7dda;
 }
 
-#disconnectBtn {
+#terminateBtn {
     background-color: #f44336;
 }
 
-#disconnectBtn:hover {
+#terminateBtn:hover {
     background-color: #d32f2f;
 }
 
@@ -157,7 +153,7 @@ button:disabled {
 
 /* Responsive adjustments for smaller screens */
 @media (max-width: 600px) {
-    .terminal {
+    .terminal-container {
         height: 300px;
     }
     

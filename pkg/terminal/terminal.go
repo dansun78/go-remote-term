@@ -97,14 +97,15 @@ func DefaultOptions() *TerminalOptions {
 		InitialCols:    80,
 		SessionTimeout: 10 * time.Minute, // Keep sessions alive for 10 minutes by default
 		Environment: []string{
-			"TERM=dumb",                          // Use dumb terminal to disable most control sequences
+			"TERM=xterm-256color",                // Use xterm-256color instead of dumb for better control sequence support
 			"PS1=\\w $ ",                         // Simple prompt without color codes
 			"PROMPT_COMMAND=",                    // Disable prompt command
 			"BASH_SILENCE_DEPRECATION_WARNING=1", // Silence bash deprecation warnings
-			"LANG=C",                             // Use C locale for simpler output
+			"LANG=en_US.UTF-8",                   // Use UTF-8 locale for better character support
 			"PATH=" + os.Getenv("PATH"),          // Preserve PATH
 			"HOME=" + os.Getenv("HOME"),          // Preserve HOME
 			"USER=" + os.Getenv("USER"),          // Preserve USER
+			"COLORTERM=truecolor",                // Enable full color support
 		},
 	}
 }
