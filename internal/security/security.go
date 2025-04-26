@@ -176,20 +176,34 @@ func checkSecurity(w http.ResponseWriter, r *http.Request) (*http.Request, bool)
 		tokenParam := r.URL.Query().Get("token")
 		tokenCookie, err := r.Cookie("auth_token")
 
-		// If accessing the root with no token, redirect to login page
-		if r.URL.Path == "/" && tokenParam == "" && (err != nil || tokenCookie.Value != config.AuthToken) {
-			http.Redirect(w, r, "/login.html", http.StatusFound)
-			return r, false
-		}
-
 		// For specific login page, allow access without token
 		if r.URL.Path == "/login.html" {
 			return r, true
 		}
 
-		// For all other static resources, verify token
-		if tokenParam != config.AuthToken && (err != nil || tokenCookie.Value != config.AuthToken) {
-			http.Error(w, "Unauthorized: Invalid or missing token", http.StatusUnauthorized)
+		// For static resources needed by login page, allow access
+		if r.URL.Path == "/style.css" {
+			return r, true
+		}
+
+		// Check if token is valid
+		isValidToken := (tokenParam == config.AuthToken || (err == nil && tokenCookie.Value == config.AuthToken))
+
+		// If token is invalid, redirect to login page with error message
+		if !isValidToken {
+			// If it's a user-facing HTML request, redirect to login page with error
+			if shouldRedirectToLogin(r) {
+				// If an invalid token was explicitly provided (not just missing), show an error
+				if tokenParam != "" || (err == nil && tokenCookie.Value != "") {
+					http.Redirect(w, r, "/login.html?error=unauthorized", http.StatusFound)
+				} else {
+					// If token is just missing, redirect without error message
+					http.Redirect(w, r, "/login.html", http.StatusFound)
+				}
+			} else {
+				// For API requests or non-HTML resources, return standard 401 Unauthorized
+				http.Error(w, "Unauthorized: Invalid or missing token", http.StatusUnauthorized)
+			}
 			return r, false
 		}
 
@@ -207,6 +221,28 @@ func checkSecurity(w http.ResponseWriter, r *http.Request) (*http.Request, bool)
 	}
 
 	return r, true
+}
+
+// shouldRedirectToLogin determines if a request should be redirected to login
+// based on the request type and headers
+func shouldRedirectToLogin(r *http.Request) bool {
+	// If it's an AJAX request or API call, don't redirect
+	if r.Header.Get("X-Requested-With") == "XMLHttpRequest" {
+		return false
+	}
+
+	// Check Accept header to see if browser is expecting HTML
+	accept := r.Header.Get("Accept")
+	if strings.Contains(accept, "text/html") {
+		return true
+	}
+
+	// Browser initiated requests for pages typically need redirects
+	return r.Method == "GET" && !strings.HasSuffix(r.URL.Path, ".js") &&
+		!strings.HasSuffix(r.URL.Path, ".css") &&
+		!strings.HasSuffix(r.URL.Path, ".png") &&
+		!strings.HasSuffix(r.URL.Path, ".jpg") &&
+		!strings.HasSuffix(r.URL.Path, ".ico")
 }
 
 // Middleware adds security checks to http handlers
