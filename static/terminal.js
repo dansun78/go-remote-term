@@ -5,12 +5,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const connectionIndicator = document.getElementById('connectionIndicator');
     const newSessionBtn = document.getElementById('newSessionBtn');
     const terminateBtn = document.getElementById('terminateBtn');
+    const fullscreenBtn = document.getElementById('fullscreenBtn');
     
     let socket = null;
     let sessionId = null; // Store the session ID for reconnection
     let reconnectAttempts = 0;
     const maxReconnectAttempts = 5;
     let reconnectTimer = null;
+    let isFullscreen = false;
     
     // Initialize xterm.js
     const term = new Terminal({
@@ -284,6 +286,87 @@ document.addEventListener('DOMContentLoaded', () => {
             newSessionBtn.disabled = false;
         }
     }
+    
+    // Toggle fullscreen mode
+    function toggleFullscreen() {
+        const container = document.body;
+        
+        if (!isFullscreen) {
+            // Enter fullscreen
+            if (container.requestFullscreen) {
+                container.requestFullscreen();
+            } else if (container.mozRequestFullScreen) { // Firefox
+                container.mozRequestFullScreen();
+            } else if (container.webkitRequestFullscreen) { // Chrome, Safari & Opera
+                container.webkitRequestFullscreen();
+            } else if (container.msRequestFullscreen) { // IE/Edge
+                container.msRequestFullscreen();
+            }
+        } else {
+            // Exit fullscreen
+            if (document.exitFullscreen) {
+                document.exitFullscreen();
+            } else if (document.mozCancelFullScreen) {
+                document.mozCancelFullScreen();
+            } else if (document.webkitExitFullscreen) {
+                document.webkitExitFullscreen();
+            } else if (document.msExitFullscreen) {
+                document.msExitFullscreen();
+            }
+        }
+    }
+    
+    // Update UI for fullscreen mode
+    function updateFullscreenUI(isFullscreenActive) {
+        isFullscreen = isFullscreenActive;
+        
+        if (isFullscreenActive) {
+            document.body.classList.add('fullscreen-mode');
+            fullscreenBtn.classList.add('active');
+        } else {
+            document.body.classList.remove('fullscreen-mode');
+            fullscreenBtn.classList.remove('active');
+        }
+        
+        // Resize terminal to fit the new container size
+        setTimeout(() => {
+            fitAddon.fit();
+        }, 100);
+    }
+    
+    // Listen for fullscreen change events
+    document.addEventListener('fullscreenchange', () => {
+        updateFullscreenUI(!!document.fullscreenElement);
+    });
+    document.addEventListener('webkitfullscreenchange', () => {
+        updateFullscreenUI(!!document.webkitFullscreenElement);
+    });
+    document.addEventListener('mozfullscreenchange', () => {
+        updateFullscreenUI(!!document.mozFullscreenElement);
+    });
+    document.addEventListener('MSFullscreenChange', () => {
+        updateFullscreenUI(!!document.msFullscreenElement);
+    });
+    
+    // Handle fullscreen button click
+    fullscreenBtn.addEventListener('click', toggleFullscreen);
+    
+    // Handle keyboard shortcut for fullscreen (F11)
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'F11') {
+            e.preventDefault();
+            toggleFullscreen();
+        }
+        
+        // ESC key in fullscreen mode will exit fullscreen
+        if (e.key === 'Escape' && isFullscreen) {
+            // Note: Most browsers automatically exit fullscreen on ESC
+            // This is just a safeguard
+            if (document.exitFullscreen) {
+                document.exitFullscreen();
+            }
+        }
+    });
     
     // Handle window resize to resize the terminal
     window.addEventListener('resize', () => {

@@ -8,6 +8,8 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css">
     <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
+    <!-- Add Font Awesome for icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
 </head>
 <body>
     <div class="container">
@@ -16,6 +18,9 @@
             <div class="terminal" id="terminal"></div>
             <div class="input-hint">Click terminal to focus and type</div>
             <div class="connection-indicator" id="connectionIndicator"></div>
+            <button id="fullscreenBtn" class="fullscreen-button" title="Toggle fullscreen">
+                <i class="fas fa-expand"></i>
+            </button>
         </div>
         <div class="status" id="status">Disconnected</div>
         <div class="session-info" id="sessionInfo">No active session</div>
@@ -31,6 +36,7 @@
                 <li>Use standard keyboard shortcuts (Ctrl+C, Ctrl+D, etc.)</li>
                 <li>Click "Terminate Session" to completely end the current session</li>
                 <li>If accidentally disconnected, you'll automatically reconnect within 10 minutes</li>
+                <li>Use the <i class="fas fa-expand"></i> button to toggle fullscreen mode</li>
             </ul>
         </div>
     </div>
