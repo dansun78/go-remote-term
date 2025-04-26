@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 
 	"github.com/dansun78/go-remote-term/internal/security"
 	"github.com/dansun78/go-remote-term/pkg/terminal"
@@ -16,14 +17,38 @@ var (
 	keyFile  = flag.String("key", "", "TLS key file path")
 	secure   = flag.Bool("secure", false, "Force HTTPS usage (generates self-signed cert if not provided)")
 	insecure = flag.Bool("insecure", false, "Allow connections from any host, not just localhost")
+	token    = flag.String("token", "", "Authentication token for accessing the terminal (if empty, a random token will be generated)")
 )
 
 func main() {
 	flag.Parse()
 
 	// Set security configuration
+	var authToken string
+	if *token == "" {
+		// Generate a random token if not provided
+		randomToken, err := security.GenerateRandomToken()
+		if err != nil {
+			log.Fatalf("Failed to generate random token: %v", err)
+		}
+		authToken = randomToken
+		// Log to stderr via standard logger
+		log.Printf("Generated authentication token: %s", authToken)
+
+		// Also print directly to stdout with clear formatting to make sure users see it
+		fmt.Println("\n=====================================================")
+		fmt.Println("AUTHENTICATION TOKEN (required to access terminal):")
+		fmt.Printf("  %s\n", authToken)
+		fmt.Println("=====================================================\n")
+	} else {
+		authToken = *token
+		// Print confirmation that we're using the provided token
+		fmt.Printf("Using provided authentication token: %s\n", authToken)
+	}
+
 	security.SetConfig(security.Config{
 		InsecureMode: *insecure,
+		AuthToken:    authToken,
 	})
 
 	// If secure mode is enabled but no cert/key provided, generate them
@@ -34,9 +59,12 @@ func main() {
 		}
 		*certFile = tempCert
 		*keyFile = tempKey
-		log.Printf("Generated self-signed certificate: %s and key: %s", *certFile, *keyFile)
-		log.Println("WARNING: Self-signed certificates are not secure for production use.")
-		log.Println("         Please use proper certificates for production environments.")
+
+		// Print certificate info to stdout
+		fmt.Printf("Generated self-signed certificate: %s\n", *certFile)
+		fmt.Printf("Generated private key: %s\n", *keyFile)
+		fmt.Println("WARNING: Self-signed certificates are not secure for production use.")
+		fmt.Println("         Please use proper certificates for production environments.")
 	}
 
 	// Get embedded static files
@@ -70,7 +98,8 @@ func main() {
 		err = http.ListenAndServe(*addr, nil)
 	}
 
-	if err != nil {
-		log.Fatal("ListenAndServe: ", err)
+	if err != nil && err != http.ErrServerClosed {
+		fmt.Fprintf(os.Stderr, "Server error: %v\n", err)
+		os.Exit(1)
 	}
 }

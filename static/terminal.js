@@ -23,11 +23,41 @@ document.addEventListener('DOMContentLoaded', () => {
         terminal.style.outline = 'none';
     });
     
+    // Helper function to get a cookie value
+    function getCookie(name) {
+        const value = `; ${document.cookie}`;
+        const parts = value.split(`; ${name}=`);
+        if (parts.length === 2) return parts.pop().split(';').shift();
+        return null;
+    }
+    
+    // Get token from URL parameters or cookie
+    function getAuthToken() {
+        // First try URL parameter
+        const urlParams = new URLSearchParams(window.location.search);
+        const tokenParam = urlParams.get('token');
+        
+        if (tokenParam) {
+            return tokenParam;
+        }
+        
+        // Then try cookie
+        return getCookie('auth_token');
+    }
+    
     // Handle WebSocket connection
     connectBtn.addEventListener('click', () => {
         // Close existing connection if any
         if (socket) {
             socket.close();
+        }
+        
+        // Get authentication token
+        const token = getAuthToken();
+        if (!token) {
+            statusDisplay.textContent = 'Authentication token missing';
+            statusDisplay.style.color = 'red';
+            return;
         }
         
         // Get the current host and construct WebSocket URL
@@ -38,7 +68,11 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             socket = new WebSocket(wsUrl);
             
+            // Set authorization header via a custom protocol header
             socket.onopen = () => {
+                // Send authentication token as first message after connection
+                socket.send(JSON.stringify({ type: 'auth', token: token }));
+                
                 statusDisplay.textContent = 'Connected';
                 statusDisplay.style.color = 'green';
                 terminal.innerHTML = '';
@@ -47,8 +81,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 terminal.focus();
             };
             
-            socket.onclose = () => {
-                statusDisplay.textContent = 'Disconnected';
+            socket.onclose = (event) => {
+                statusDisplay.textContent = event.code === 1000 ? 'Disconnected' : 'Connection closed: ' + event.code;
                 statusDisplay.style.color = 'red';
                 connectBtn.disabled = false;
                 disconnectBtn.disabled = true;
@@ -61,6 +95,22 @@ document.addEventListener('DOMContentLoaded', () => {
             };
             
             socket.onmessage = (event) => {
+                // Check if the message is an authentication response
+                try {
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'auth_response') {
+                        if (!data.success) {
+                            statusDisplay.textContent = 'Authentication failed: ' + data.message;
+                            statusDisplay.style.color = 'red';
+                            socket.close();
+                            return;
+                        }
+                        return; // Don't process auth responses as terminal output
+                    }
+                } catch (e) {
+                    // Not JSON, treat as normal terminal output
+                }
+                
                 const text = event.data;
                 // Process terminal output with ANSI handling
                 processTerminalOutput(text);
@@ -175,4 +225,12 @@ document.addEventListener('DOMContentLoaded', () => {
     terminal.addEventListener('keypress', (e) => {
         e.preventDefault(); // Prevent default to handle all input manually
     });
+    
+    // Auto-connect if we have a token
+    if (getAuthToken()) {
+        connectBtn.click();
+    } else {
+        // Redirect to login page if no token is found
+        window.location.href = '/login.html';
+    }
 });

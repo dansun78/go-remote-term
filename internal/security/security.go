@@ -1,6 +1,7 @@
 package security
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -15,11 +16,19 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
+
+// Key for token in request context
+type contextKey string
+
+const TokenContextKey contextKey = "auth_token"
 
 // Config holds configuration options for security features
 type Config struct {
-	InsecureMode bool // Allow connections from any host, not just localhost
+	InsecureMode bool   // Allow connections from any host, not just localhost
+	AuthToken    string // Authentication token for session access
 }
 
 // Current security configuration, set by main.go
@@ -28,6 +37,23 @@ var config Config
 // SetConfig updates the security configuration
 func SetConfig(cfg Config) {
 	config = cfg
+}
+
+// GetAuthToken returns the configured authentication token
+func GetAuthToken() string {
+	return config.AuthToken
+}
+
+// GenerateRandomToken creates a UUIDv4 token for authentication
+func GenerateRandomToken() (string, error) {
+	// Generate a UUIDv4 (random UUID)
+	tokenUUID, err := uuid.NewRandom()
+	if err != nil {
+		return "", fmt.Errorf("failed to generate UUIDv4 token: %v", err)
+	}
+
+	// Return the UUID as a string
+	return tokenUUID.String(), nil
 }
 
 // GenerateSelfSignedCert creates a temporary self-signed certificate and key
@@ -116,20 +142,78 @@ func GenerateSelfSignedCert() (string, string, error) {
 }
 
 // checkSecurity verifies if the request should be allowed based on security settings
-func checkSecurity(w http.ResponseWriter, r *http.Request) bool {
+func checkSecurity(w http.ResponseWriter, r *http.Request) (*http.Request, bool) {
 	// If insecure flag is not set and we're using HTTP, check if request is from localhost
 	if !config.InsecureMode && !IsHTTPS(r) && !IsLocalhost(r) {
 		http.Error(w, "HTTP access restricted to localhost only", http.StatusForbidden)
-		return false
+		return r, false
 	}
-	return true
+
+	// Store current token in request context for other handlers to access
+	ctx := context.WithValue(r.Context(), TokenContextKey, config.AuthToken)
+	r = r.WithContext(ctx)
+
+	// If auth token is set, validate it
+	if config.AuthToken != "" {
+		// For WebSocket endpoints, don't check credentials here
+		// We'll validate them after the WebSocket connection is established
+		if strings.HasPrefix(r.URL.Path, "/ws") {
+			// For WebSocket, we'll validate in the WebSocket handler
+			return r, true
+		}
+
+		// For API endpoints, check Authorization header
+		authHeader := r.Header.Get("Authorization")
+		if strings.HasPrefix(r.URL.Path, "/api") {
+			if authHeader != "Bearer "+config.AuthToken {
+				http.Error(w, "Unauthorized: Invalid or missing token", http.StatusUnauthorized)
+				return r, false
+			}
+			return r, true
+		}
+
+		// For web UI, check token parameter in URL or cookie
+		tokenParam := r.URL.Query().Get("token")
+		tokenCookie, err := r.Cookie("auth_token")
+
+		// If accessing the root with no token, redirect to login page
+		if r.URL.Path == "/" && tokenParam == "" && (err != nil || tokenCookie.Value != config.AuthToken) {
+			http.Redirect(w, r, "/login.html", http.StatusFound)
+			return r, false
+		}
+
+		// For specific login page, allow access without token
+		if r.URL.Path == "/login.html" {
+			return r, true
+		}
+
+		// For all other static resources, verify token
+		if tokenParam != config.AuthToken && (err != nil || tokenCookie.Value != config.AuthToken) {
+			http.Error(w, "Unauthorized: Invalid or missing token", http.StatusUnauthorized)
+			return r, false
+		}
+
+		// If token is valid, set it as a cookie for future requests
+		if tokenParam == config.AuthToken {
+			http.SetCookie(w, &http.Cookie{
+				Name:     "auth_token",
+				Value:    config.AuthToken,
+				HttpOnly: true,
+				Secure:   IsHTTPS(r),
+				Path:     "/",
+				MaxAge:   3600 * 24, // 1 day
+			})
+		}
+	}
+
+	return r, true
 }
 
 // Middleware adds security checks to http handlers
 func Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if checkSecurity(w, r) {
-			next.ServeHTTP(w, r)
+		if newRequest, ok := checkSecurity(w, r); ok {
+			next.ServeHTTP(w, newRequest)
 		}
 	})
 }
@@ -137,8 +221,8 @@ func Middleware(next http.Handler) http.Handler {
 // Handler adds security checks to http.HandlerFunc handlers
 func Handler(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if checkSecurity(w, r) {
-			next(w, r)
+		if newRequest, ok := checkSecurity(w, r); ok {
+			next(w, newRequest)
 		}
 	}
 }

@@ -3,6 +3,7 @@
 package terminal
 
 import (
+	"encoding/json"
 	"io"
 	"log"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/creack/pty"
+	"github.com/dansun78/go-remote-term/internal/security"
 	"github.com/gorilla/websocket"
 )
 
@@ -37,6 +39,19 @@ type TerminalOptions struct {
 
 	// Environment variables to pass to the shell
 	Environment []string
+}
+
+// Message represents WebSocket message structure
+type Message struct {
+	Type  string `json:"type"`
+	Token string `json:"token,omitempty"`
+}
+
+// AuthResponse represents an authentication response message
+type AuthResponse struct {
+	Type    string `json:"type"`
+	Success bool   `json:"success"`
+	Message string `json:"message,omitempty"`
 }
 
 // DefaultOptions returns the default terminal options
@@ -76,6 +91,79 @@ func HandleWebSocketWithOptions(w http.ResponseWriter, r *http.Request, options 
 		return
 	}
 	defer conn.Close()
+
+	// Wait for authentication message
+	_, rawMessage, err := conn.ReadMessage()
+	if err != nil {
+		log.Println("Failed to read authentication message:", err)
+		return
+	}
+
+	// Parse the authentication message
+	var msg Message
+	if err := json.Unmarshal(rawMessage, &msg); err != nil {
+		log.Println("Failed to parse authentication message:", err)
+		authResp := AuthResponse{
+			Type:    "auth_response",
+			Success: false,
+			Message: "Invalid authentication format",
+		}
+		respBytes, _ := json.Marshal(authResp)
+		conn.WriteMessage(websocket.TextMessage, respBytes)
+		return
+	}
+
+	if msg.Type != "auth" {
+		log.Println("Expected auth message type but got:", msg.Type)
+		authResp := AuthResponse{
+			Type:    "auth_response",
+			Success: false,
+			Message: "Invalid message type",
+		}
+		respBytes, _ := json.Marshal(authResp)
+		conn.WriteMessage(websocket.TextMessage, respBytes)
+		return
+	}
+
+	// Get the configured auth token
+	configuredToken := security.GetAuthToken()
+
+	// Check token validity - client-provided token must not be empty
+	if msg.Token == "" {
+		authResp := AuthResponse{
+			Type:    "auth_response",
+			Success: false,
+			Message: "Missing authentication token",
+		}
+		respBytes, _ := json.Marshal(authResp)
+		conn.WriteMessage(websocket.TextMessage, respBytes)
+		log.Println("Authentication failed: Missing token")
+		return
+	}
+
+	// If we have a configured server token and it doesn't match the provided one, reject
+	if configuredToken != "" && msg.Token != configuredToken {
+		authResp := AuthResponse{
+			Type:    "auth_response",
+			Success: false,
+			Message: "Invalid authentication token",
+		}
+		respBytes, _ := json.Marshal(authResp)
+		conn.WriteMessage(websocket.TextMessage, respBytes)
+		log.Println("Authentication failed: Invalid token")
+		return
+	}
+
+	// Send successful authentication response
+	authResp := AuthResponse{
+		Type:    "auth_response",
+		Success: true,
+	}
+	respBytes, _ := json.Marshal(authResp)
+	if err := conn.WriteMessage(websocket.TextMessage, respBytes); err != nil {
+		log.Println("Failed to send auth response:", err)
+		return
+	}
 
 	// Create a new shell command with the specified options
 	cmd := exec.Command(options.Shell)
@@ -175,6 +263,14 @@ func HandleWebSocketWithOptions(w http.ResponseWriter, r *http.Request, options 
 			if err != nil {
 				log.Println("Error reading from WebSocket:", err)
 				break
+			}
+
+			// Check if message is JSON (might be a control message)
+			var jsonMsg map[string]interface{}
+			if err := json.Unmarshal(message, &jsonMsg); err == nil {
+				// This is a JSON message, not terminal input
+				log.Println("Received JSON control message:", string(message))
+				continue
 			}
 
 			if _, err := ptmx.Write(message); err != nil {
