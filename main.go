@@ -11,17 +11,32 @@ import (
 	"github.com/dansun78/go-remote-term/pkg/terminal"
 )
 
+// Version information that can be overridden during build
 var (
-	addr     = flag.String("addr", ":8080", "HTTP service address")
-	certFile = flag.String("cert", "", "TLS cert file path")
-	keyFile  = flag.String("key", "", "TLS key file path")
-	secure   = flag.Bool("secure", false, "Force HTTPS usage (generates self-signed cert if not provided)")
-	insecure = flag.Bool("insecure", false, "Allow connections from any host, not just localhost")
-	token    = flag.String("token", "", "Authentication token for accessing the terminal (if empty, a random token will be generated)")
+	// These values will be overridden during build with ldflags
+	AppName    = "go-remote-term"
+	AppVersion = "dev"     // Default to "dev" if not specified at build time
+	BuildDate  = "unknown" // Default to "unknown" if not specified at build time
+)
+
+var (
+	addr        = flag.String("addr", ":8080", "HTTP service address")
+	certFile    = flag.String("cert", "", "TLS cert file path")
+	keyFile     = flag.String("key", "", "TLS key file path")
+	secure      = flag.Bool("secure", false, "Force HTTPS usage (generates self-signed cert if not provided)")
+	insecure    = flag.Bool("insecure", false, "Allow connections from any host, not just localhost")
+	token       = flag.String("token", "", "Authentication token for accessing the terminal (if empty, a random token will be generated)")
+	versionFlag = flag.Bool("version", false, "Display version information")
 )
 
 func main() {
 	flag.Parse()
+
+	// Handle version flag
+	if *versionFlag {
+		fmt.Printf("%s v%s (built on %s)\n", AppName, AppVersion, BuildDate)
+		os.Exit(0)
+	}
 
 	// Set security configuration
 	var authToken string
@@ -39,7 +54,7 @@ func main() {
 		fmt.Println("\n=====================================================")
 		fmt.Println("AUTHENTICATION TOKEN (required to access terminal):")
 		fmt.Printf("  %s\n", authToken)
-		fmt.Println("=====================================================\n")
+		fmt.Println("=====================================================")
 	} else {
 		authToken = *token
 		// Print confirmation that we're using the provided token
