@@ -12,19 +12,22 @@
         <div class="terminal-container">
             <div class="terminal" id="terminal"></div>
             <div class="input-hint">Click terminal to focus and type</div>
+            <div class="connection-indicator" id="connectionIndicator"></div>
         </div>
         <div class="status" id="status">Disconnected</div>
+        <div class="session-info" id="sessionInfo">No active session</div>
         <div class="controls">
-            <button id="connectBtn">Connect</button>
-            <button id="disconnectBtn" disabled>Disconnect</button>
+            <button id="newSessionBtn">New Session</button>
+            <button id="terminateBtn" disabled>Terminate Session</button>
         </div>
         <div class="instructions">
             <h3>Usage Instructions:</h3>
             <ul>
-                <li>Click "Connect" to start a terminal session</li>
+                <li>Click "New Session" to start a fresh terminal session</li>
                 <li>Click inside the terminal area to focus and begin typing</li>
                 <li>Use standard keyboard shortcuts (Ctrl+C, Ctrl+D, etc.)</li>
-                <li>Press "Disconnect" when done</li>
+                <li>Click "Terminate Session" to completely end the current session</li>
+                <li>If accidentally disconnected, you'll automatically reconnect within 10 minutes</li>
             </ul>
         </div>
     </div>

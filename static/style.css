@@ -54,10 +54,42 @@ h1 {
     opacity: 0;
 }
 
+.connection-indicator {
+    position: absolute;
+    top: 8px;
+    right: 10px;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background-color: #ff3333; /* Red for disconnected */
+}
+
+.connection-indicator.connected {
+    background-color: #4CAF50; /* Green for connected */
+}
+
+.connection-indicator.reconnecting {
+    background-color: #ffaa33; /* Orange for reconnecting */
+    animation: blink 1s infinite;
+}
+
+@keyframes blink {
+    0% { opacity: 0.4; }
+    50% { opacity: 1; }
+    100% { opacity: 0.4; }
+}
+
 .status {
     text-align: center;
-    margin-bottom: 10px;
+    margin-bottom: 5px;
     font-weight: bold;
+}
+
+.session-info {
+    text-align: center;
+    margin-bottom: 10px;
+    font-size: 0.9em;
+    color: #666;
 }
 
 .controls {
@@ -86,6 +118,22 @@ button:disabled {
     cursor: not-allowed;
 }
 
+#newSessionBtn {
+    background-color: #2196F3;
+}
+
+#newSessionBtn:hover {
+    background-color: #0b7dda;
+}
+
+#disconnectBtn {
+    background-color: #f44336;
+}
+
+#disconnectBtn:hover {
+    background-color: #d32f2f;
+}
+
 .instructions {
     background-color: #fff;
     border: 1px solid #ddd;
@@ -105,4 +153,21 @@ button:disabled {
 
 .instructions li {
     margin-bottom: 8px;
+}
+
+/* Responsive adjustments for smaller screens */
+@media (max-width: 600px) {
+    .terminal {
+        height: 300px;
+    }
+    
+    .controls {
+        flex-direction: column;
+        align-items: center;
+    }
+    
+    button {
+        width: 80%;
+        margin-bottom: 5px;
+    }
 }

@@ -3,7 +3,9 @@
 package terminal
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -15,6 +17,7 @@ import (
 
 	"github.com/creack/pty"
 	"github.com/dansun78/go-remote-term/internal/security"
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 )
 
@@ -39,20 +42,47 @@ type TerminalOptions struct {
 
 	// Environment variables to pass to the shell
 	Environment []string
+
+	// SessionTimeout defines how long to keep a disconnected session alive (default: 10 minutes)
+	SessionTimeout time.Duration
 }
 
-// Message represents WebSocket message structure
+// Terminal session messages
 type Message struct {
-	Type  string `json:"type"`
-	Token string `json:"token,omitempty"`
+	Type      string `json:"type"`
+	Token     string `json:"token,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
+	Data      string `json:"data,omitempty"`
+	Rows      uint16 `json:"rows,omitempty"`
+	Cols      uint16 `json:"cols,omitempty"`
 }
 
-// AuthResponse represents an authentication response message
-type AuthResponse struct {
-	Type    string `json:"type"`
-	Success bool   `json:"success"`
-	Message string `json:"message,omitempty"`
+// Response messages
+type Response struct {
+	Type      string `json:"type"`
+	Success   bool   `json:"success"`
+	Message   string `json:"message,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
 }
+
+// TerminalSession represents an active terminal session
+type TerminalSession struct {
+	ID           string
+	PTY          *os.File
+	Command      *exec.Cmd
+	Options      *TerminalOptions
+	OutputBuffer *bytes.Buffer
+	LastActive   time.Time
+	Connections  int
+	Lock         sync.Mutex
+	Done         chan struct{}
+}
+
+// Global session manager
+var (
+	sessions     = make(map[string]*TerminalSession)
+	sessionsLock sync.Mutex
+)
 
 // DefaultOptions returns the default terminal options
 func DefaultOptions() *TerminalOptions {
@@ -62,9 +92,10 @@ func DefaultOptions() *TerminalOptions {
 	}
 
 	return &TerminalOptions{
-		Shell:       shell,
-		InitialRows: 24,
-		InitialCols: 80,
+		Shell:          shell,
+		InitialRows:    24,
+		InitialCols:    80,
+		SessionTimeout: 10 * time.Minute, // Keep sessions alive for 10 minutes by default
 		Environment: []string{
 			"TERM=dumb",                          // Use dumb terminal to disable most control sequences
 			"PS1=\\w $ ",                         // Simple prompt without color codes
@@ -81,6 +112,202 @@ func DefaultOptions() *TerminalOptions {
 // HandleWebSocket handles WebSocket connections for terminal sessions with default options
 func HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	HandleWebSocketWithOptions(w, r, DefaultOptions())
+}
+
+// startSessionCleanupRoutine starts a background routine to cleanup expired sessions
+func init() {
+	go func() {
+		for {
+			time.Sleep(1 * time.Minute)
+			cleanupExpiredSessions()
+		}
+	}()
+}
+
+// cleanupExpiredSessions removes sessions that have been inactive longer than their timeout
+func cleanupExpiredSessions() {
+	sessionsLock.Lock()
+	defer sessionsLock.Unlock()
+
+	now := time.Now()
+	for id, session := range sessions {
+		session.Lock.Lock()
+		lastActive := session.LastActive
+		connections := session.Connections
+		session.Lock.Unlock()
+
+		// If session has no active connections and has exceeded timeout
+		if connections == 0 && now.Sub(lastActive) > session.Options.SessionTimeout {
+			log.Printf("Cleaning up expired session %s (inactive for %v)", id, now.Sub(lastActive))
+			closeSession(id)
+		}
+	}
+}
+
+// closeSession terminates and removes a session
+func closeSession(sessionID string) {
+	sessionsLock.Lock()
+	defer sessionsLock.Unlock()
+
+	session, exists := sessions[sessionID]
+	if !exists {
+		return
+	}
+
+	// Signal the terminal process to terminate
+	if session.Command != nil && session.Command.Process != nil {
+		session.Command.Process.Signal(syscall.SIGTERM)
+	}
+
+	// Close the PTY if it exists
+	if session.PTY != nil {
+		session.PTY.Close()
+	}
+
+	// Signal done channel
+	close(session.Done)
+
+	// Remove from sessions map
+	delete(sessions, sessionID)
+}
+
+// terminateSession explicitly terminates a session by ID
+func terminateSession(sessionID string) bool {
+	if sessionID == "" {
+		return false
+	}
+
+	sessionsLock.Lock()
+	_, exists := sessions[sessionID]
+	sessionsLock.Unlock()
+
+	if !exists {
+		return false
+	}
+
+	log.Printf("Explicitly terminating session %s at user request", sessionID)
+	closeSession(sessionID)
+	return true
+}
+
+// createNewSession initializes a new terminal session
+func createNewSession(options *TerminalOptions) (*TerminalSession, error) {
+	// Generate a unique session ID
+	sessionID := uuid.New().String()
+
+	// Create a new shell command with the specified options
+	cmd := exec.Command(options.Shell)
+	cmd.Env = options.Environment
+
+	// Start the command with a pty
+	ptmx, err := pty.Start(cmd)
+	if err != nil {
+		return nil, fmt.Errorf("failed to start PTY: %v", err)
+	}
+
+	// Set terminal size to specified dimensions
+	pty.Setsize(ptmx, &pty.Winsize{
+		Rows: options.InitialRows,
+		Cols: options.InitialCols,
+		X:    0,
+		Y:    0,
+	})
+
+	// Initialize the terminal session
+	session := &TerminalSession{
+		ID:           sessionID,
+		PTY:          ptmx,
+		Command:      cmd,
+		Options:      options,
+		OutputBuffer: new(bytes.Buffer),
+		LastActive:   time.Now(),
+		Connections:  0,
+		Done:         make(chan struct{}),
+	}
+
+	// Configure the terminal
+	configureTerminal(session)
+
+	// Store in the global sessions map
+	sessionsLock.Lock()
+	sessions[sessionID] = session
+	sessionsLock.Unlock()
+
+	// Start output buffer routine
+	go bufferTerminalOutput(session)
+
+	return session, nil
+}
+
+// configureTerminal sets up the terminal with proper settings
+func configureTerminal(session *TerminalSession) {
+	// Small delay to allow terminal to initialize
+	time.Sleep(100 * time.Millisecond)
+
+	// Let's run a setup script to make sure the shell is properly configured
+	setupCommands := []string{
+		"stty echo\n",           // Enable local echo so user can see what they type
+		"stty onlcr\n",          // Map NL to CR-NL on output
+		"stty icrnl\n",          // Map CR to NL on input
+		"stty opost\n",          // Enable output processing
+		"export PS1='\\w $ '\n", // Set prompt explicitly again
+		"clear\n",               // Clear the screen
+	}
+
+	// Clear any pending input
+	discardBuf := make([]byte, 1024)
+	session.PTY.Read(discardBuf)
+
+	// Send setup commands safely with delay between them
+	for _, cmd := range setupCommands {
+		_, err := session.PTY.Write([]byte(cmd))
+		if err != nil {
+			log.Println("Error writing setup command:", err)
+		}
+		time.Sleep(50 * time.Millisecond)
+
+		// Discard output from the commands
+		session.PTY.Read(discardBuf)
+	}
+
+	// Explicitly send a newline to force prompt display
+	_, err := session.PTY.Write([]byte("\n"))
+	if err != nil {
+		log.Println("Error triggering prompt:", err)
+	}
+
+	// Small delay before starting the I/O loops to ensure prompt shows up
+	time.Sleep(100 * time.Millisecond)
+}
+
+// bufferTerminalOutput continuously reads from the PTY and adds it to the buffer
+func bufferTerminalOutput(session *TerminalSession) {
+	buf := make([]byte, 1024)
+	for {
+		select {
+		case <-session.Done:
+			return
+		default:
+			n, err := session.PTY.Read(buf)
+			if err != nil {
+				if err != io.EOF {
+					log.Printf("Error reading from PTY (session %s): %v", session.ID, err)
+				}
+				return
+			}
+
+			// Process the output to remove problematic control sequences
+			output := processTerminalOutput(buf[:n])
+
+			// Add to the buffer and update last active time
+			if len(output) > 0 {
+				session.Lock.Lock()
+				session.OutputBuffer.Write(output)
+				session.LastActive = time.Now()
+				session.Lock.Unlock()
+			}
+		}
+	}
 }
 
 // HandleWebSocketWithOptions handles WebSocket connections for terminal sessions with custom options
@@ -103,25 +330,14 @@ func HandleWebSocketWithOptions(w http.ResponseWriter, r *http.Request, options 
 	var msg Message
 	if err := json.Unmarshal(rawMessage, &msg); err != nil {
 		log.Println("Failed to parse authentication message:", err)
-		authResp := AuthResponse{
-			Type:    "auth_response",
-			Success: false,
-			Message: "Invalid authentication format",
-		}
-		respBytes, _ := json.Marshal(authResp)
-		conn.WriteMessage(websocket.TextMessage, respBytes)
+		sendErrorResponse(conn, "Invalid authentication format")
 		return
 	}
 
+	// Handle authentication
 	if msg.Type != "auth" {
 		log.Println("Expected auth message type but got:", msg.Type)
-		authResp := AuthResponse{
-			Type:    "auth_response",
-			Success: false,
-			Message: "Invalid message type",
-		}
-		respBytes, _ := json.Marshal(authResp)
-		conn.WriteMessage(websocket.TextMessage, respBytes)
+		sendErrorResponse(conn, "Invalid message type")
 		return
 	}
 
@@ -130,34 +346,57 @@ func HandleWebSocketWithOptions(w http.ResponseWriter, r *http.Request, options 
 
 	// Check token validity - client-provided token must not be empty
 	if msg.Token == "" {
-		authResp := AuthResponse{
-			Type:    "auth_response",
-			Success: false,
-			Message: "Missing authentication token",
-		}
-		respBytes, _ := json.Marshal(authResp)
-		conn.WriteMessage(websocket.TextMessage, respBytes)
+		sendErrorResponse(conn, "Missing authentication token")
 		log.Println("Authentication failed: Missing token")
 		return
 	}
 
 	// If we have a configured server token and it doesn't match the provided one, reject
 	if configuredToken != "" && msg.Token != configuredToken {
-		authResp := AuthResponse{
-			Type:    "auth_response",
-			Success: false,
-			Message: "Invalid authentication token",
-		}
-		respBytes, _ := json.Marshal(authResp)
-		conn.WriteMessage(websocket.TextMessage, respBytes)
+		sendErrorResponse(conn, "Invalid authentication token")
 		log.Println("Authentication failed: Invalid token")
 		return
 	}
 
-	// Send successful authentication response
-	authResp := AuthResponse{
-		Type:    "auth_response",
-		Success: true,
+	// At this point user is authenticated
+
+	var session *TerminalSession
+	var isNewSession bool
+
+	// Check if client is requesting reconnection to existing session
+	if msg.SessionID != "" {
+		sessionsLock.Lock()
+		existingSession, exists := sessions[msg.SessionID]
+		sessionsLock.Unlock()
+
+		if exists {
+			session = existingSession
+			isNewSession = false
+			log.Printf("Reconnecting to existing session: %s", session.ID)
+		} else {
+			log.Printf("Requested session %s not found, creating new session", msg.SessionID)
+			isNewSession = true
+		}
+	} else {
+		isNewSession = true
+	}
+
+	// Create new session if needed
+	if isNewSession {
+		newSession, err := createNewSession(options)
+		if err != nil {
+			sendErrorResponse(conn, fmt.Sprintf("Failed to create terminal: %v", err))
+			return
+		}
+		session = newSession
+		log.Printf("Created new terminal session: %s", session.ID)
+	}
+
+	// Send successful authentication response with session ID
+	authResp := Response{
+		Type:      "auth_response",
+		Success:   true,
+		SessionID: session.ID,
 	}
 	respBytes, _ := json.Marshal(authResp)
 	if err := conn.WriteMessage(websocket.TextMessage, respBytes); err != nil {
@@ -165,90 +404,68 @@ func HandleWebSocketWithOptions(w http.ResponseWriter, r *http.Request, options 
 		return
 	}
 
-	// Create a new shell command with the specified options
-	cmd := exec.Command(options.Shell)
-	cmd.Env = options.Environment
+	// Increment connection count
+	session.Lock.Lock()
+	session.Connections++
 
-	// Start the command with a pty
-	ptmx, err := pty.Start(cmd)
-	if err != nil {
-		log.Println("Failed to start PTY:", err)
-		return
-	}
-	defer ptmx.Close()
+	// If reconnecting, send buffer contents
+	if !isNewSession && session.OutputBuffer.Len() > 0 {
+		bufferContents := session.OutputBuffer.Bytes()
+		session.Lock.Unlock()
 
-	// Set terminal size to specified dimensions
-	pty.Setsize(ptmx, &pty.Winsize{
-		Rows: options.InitialRows,
-		Cols: options.InitialCols,
-		X:    0,
-		Y:    0,
-	})
-
-	// Small delay to allow terminal to initialize
-	time.Sleep(100 * time.Millisecond)
-
-	// Let's run a setup script to make sure the shell is properly configured
-	setupCommands := []string{
-		"stty echo\n",           // Enable local echo so user can see what they type
-		"stty onlcr\n",          // Map NL to CR-NL on output
-		"stty icrnl\n",          // Map CR to NL on input
-		"stty opost\n",          // Enable output processing
-		"export PS1='\\w $ '\n", // Set prompt explicitly again
-		"clear\n",               // Clear the screen
-	}
-
-	// Clear any pending input
-	discardBuf := make([]byte, 1024)
-	ptmx.Read(discardBuf)
-
-	// Send setup commands safely with delay between them
-	for _, cmd := range setupCommands {
-		_, err = ptmx.Write([]byte(cmd))
+		// Send current buffer contents to client for session continuity
+		err := conn.WriteMessage(websocket.TextMessage, bufferContents)
 		if err != nil {
-			log.Println("Error writing setup command:", err)
+			log.Printf("Error sending buffer to client: %v", err)
 		}
-		time.Sleep(50 * time.Millisecond)
-
-		// Discard output from the commands
-		ptmx.Read(discardBuf)
+	} else {
+		session.Lock.Unlock()
 	}
 
-	// Explicitly send a newline to force prompt display
-	_, err = ptmx.Write([]byte("\n"))
-	if err != nil {
-		log.Println("Error triggering prompt:", err)
-	}
+	// Handle WebSocket connection for this session
+	handleTerminalConnection(conn, session)
+}
 
-	// Small delay before starting the I/O loops to ensure prompt shows up
-	time.Sleep(100 * time.Millisecond)
-
-	// Wait group to ensure all goroutines complete
+// handleTerminalConnection manages a WebSocket connection for an existing terminal session
+func handleTerminalConnection(conn *websocket.Conn, session *TerminalSession) {
+	// Wait group for connection handling goroutines
 	var wg sync.WaitGroup
 	wg.Add(2)
 
-	// Terminal output to WebSocket
+	// Channel to signal when this connection is closed
+	connClosed := make(chan struct{})
+
+	// Forward terminal output to the WebSocket
 	go func() {
 		defer wg.Done()
 
-		buf := make([]byte, 1024)
+		lastSize := 0
+		ticker := time.NewTicker(100 * time.Millisecond)
+		defer ticker.Stop()
+
 		for {
-			n, err := ptmx.Read(buf)
-			if err != nil {
-				if err != io.EOF {
-					log.Println("Error reading from PTY:", err)
-				}
-				break
-			}
+			select {
+			case <-connClosed:
+				return
+			case <-session.Done:
+				return
+			case <-ticker.C:
+				// Check if there's new output to send
+				session.Lock.Lock()
+				currentSize := session.OutputBuffer.Len()
+				if currentSize > lastSize {
+					// Only send the new part since last check
+					bufferContents := session.OutputBuffer.Bytes()[lastSize:currentSize]
+					session.Lock.Unlock()
 
-			// Process the output to remove problematic control sequences
-			output := processTerminalOutput(buf[:n])
+					if err := conn.WriteMessage(websocket.TextMessage, bufferContents); err != nil {
+						log.Println("Error writing to WebSocket:", err)
+						return
+					}
 
-			// Only send if there's actual content
-			if len(output) > 0 {
-				if err := conn.WriteMessage(websocket.TextMessage, output); err != nil {
-					log.Println("Error writing to WebSocket:", err)
-					break
+					lastSize = currentSize
+				} else {
+					session.Lock.Unlock()
 				}
 			}
 		}
@@ -257,40 +474,87 @@ func HandleWebSocketWithOptions(w http.ResponseWriter, r *http.Request, options 
 	// WebSocket input to terminal
 	go func() {
 		defer wg.Done()
+		defer close(connClosed)
 
 		for {
 			_, message, err := conn.ReadMessage()
 			if err != nil {
-				log.Println("Error reading from WebSocket:", err)
+				log.Printf("WebSocket connection closed: %v", err)
 				break
 			}
 
 			// Check if message is JSON (might be a control message)
-			var jsonMsg map[string]interface{}
+			var jsonMsg Message
 			if err := json.Unmarshal(message, &jsonMsg); err == nil {
-				// This is a JSON message, not terminal input
+				// Handle control messages
+				if jsonMsg.Type == "resize" && jsonMsg.Rows > 0 && jsonMsg.Cols > 0 {
+					// Resize the terminal
+					ResizeTerminal(session.PTY, jsonMsg.Rows, jsonMsg.Cols)
+					continue
+				}
+
+				// Handle terminate session request
+				if jsonMsg.Type == "terminate" && jsonMsg.SessionID == session.ID {
+					// Send acknowledgment before terminating
+					resp := Response{
+						Type:      "terminate_response",
+						Success:   true,
+						Message:   "Session terminated",
+						SessionID: session.ID,
+					}
+					respBytes, _ := json.Marshal(resp)
+					conn.WriteMessage(websocket.TextMessage, respBytes)
+
+					// Schedule termination (do it after response is sent)
+					go func() {
+						time.Sleep(100 * time.Millisecond) // Brief delay to allow response to be sent
+						terminateSession(session.ID)
+					}()
+					continue
+				}
+
+				// Handle other control messages
 				log.Println("Received JSON control message:", string(message))
 				continue
 			}
 
-			if _, err := ptmx.Write(message); err != nil {
+			// For normal input, write to PTY
+			session.Lock.Lock()
+			session.LastActive = time.Now()
+			_, err = session.PTY.Write(message)
+			session.Lock.Unlock()
+
+			if err != nil {
 				log.Println("Error writing to PTY:", err)
 				break
 			}
 		}
-
-		// Signal the process to terminate
-		cmd.Process.Signal(syscall.SIGTERM)
 	}()
 
-	// Wait for the command to finish
+	// Wait for connection handling to complete
 	wg.Wait()
-	if err := cmd.Wait(); err != nil {
-		// Don't log if process was terminated normally
-		if err.Error() != "signal: terminated" {
-			log.Println("Command exited with error:", err)
-		}
+
+	// Decrement connection count when this connection ends
+	session.Lock.Lock()
+	session.Connections--
+	session.LastActive = time.Now()
+	session.Lock.Unlock()
+
+	log.Printf("WebSocket connection closed for session %s, remaining connections: %d",
+		session.ID, session.Connections)
+
+	// Note: We don't automatically close the session here to allow reconnection
+}
+
+// sendErrorResponse sends an error response to the client
+func sendErrorResponse(conn *websocket.Conn, message string) {
+	resp := Response{
+		Type:    "auth_response",
+		Success: false,
+		Message: message,
 	}
+	respBytes, _ := json.Marshal(resp)
+	conn.WriteMessage(websocket.TextMessage, respBytes)
 }
 
 // ResizeTerminal resizes the terminal window
