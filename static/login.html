@@ -6,6 +6,11 @@
     <title>Go Remote Terminal - Login</title>
     <link rel="stylesheet" href="style.css">
     <style>
+        body {
+            background-color: #1e1e1e;
+            color: #f0f0f0;
+            font-family: 'Arial', sans-serif;
+        }
         .login-container {
             max-width: 400px;
             margin: 100px auto;
@@ -17,6 +22,7 @@
         .login-title {
             text-align: center;
             margin-bottom: 20px;
+            color: #4CAF50;
         }
         .form-group {
             margin-bottom: 15px;
@@ -24,33 +30,52 @@
         .form-group label {
             display: block;
             margin-bottom: 5px;
+            color: #e0e0e0;
+            font-weight: bold;
         }
         .form-group input {
-            width: 100%;
-            padding: 8px;
+            width: 100%; /* Full width to match button */
+            padding: 10px;
             border: 1px solid #555;
             border-radius: 4px;
-            background-color: #333;
+            background-color: #3a3a3a;
             color: #fff;
+            font-size: 14px;
+            transition: border-color 0.3s;
+            box-sizing: border-box; /* Include padding in width calculation */
+        }
+        .form-group input:focus {
+            outline: none;
+            border-color: #4CAF50;
+            box-shadow: 0 0 5px rgba(76, 175, 80, 0.5);
         }
         .submit-button {
             width: 100%;
-            padding: 10px;
+            padding: 10px; /* Match the padding of the input field */
             background-color: #4CAF50;
             color: white;
             border: none;
             border-radius: 4px;
             cursor: pointer;
             font-size: 16px;
+            font-weight: bold;
+            transition: background-color 0.3s;
+            box-sizing: border-box; /* Include padding in width calculation */
         }
         .submit-button:hover {
             background-color: #45a049;
+        }
+        .submit-button:active {
+            transform: translateY(1px);
         }
         .error-message {
             color: #ff6b6b;
             margin-top: 10px;
             text-align: center;
             display: none;
+            padding: 8px;
+            background-color: rgba(255, 107, 107, 0.1);
+            border-radius: 4px;
         }
     </style>
 </head>

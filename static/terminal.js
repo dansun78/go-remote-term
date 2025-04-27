@@ -14,16 +14,34 @@ document.addEventListener('DOMContentLoaded', () => {
     let reconnectTimer = null;
     let isFullscreen = false;
     
-    // Initialize xterm.js
+    // Initialize xterm.js with colors matching our dark theme
     const term = new Terminal({
         cursorBlink: true,
         theme: {
-            background: '#000',
-            foreground: '#0f0',
-            cursor: '#0f0'
+            background: '#2b2b2b',
+            foreground: '#f0f0f0',
+            cursor: '#4CAF50',
+            cursorAccent: '#2b2b2b',
+            selection: 'rgba(76, 175, 80, 0.3)',
+            black: '#2b2b2b',
+            red: '#ff6b6b',
+            green: '#4CAF50',
+            yellow: '#ffaa33',
+            blue: '#2196F3',
+            magenta: '#c678dd',
+            cyan: '#56b6c2',
+            white: '#e0e0e0',
+            brightBlack: '#555555',
+            brightRed: '#ff8585',
+            brightGreen: '#45a049',
+            brightYellow: '#ffb74d',
+            brightBlue: '#0b7dda',
+            brightMagenta: '#d992e9',
+            brightCyan: '#6cc8d4',
+            brightWhite: '#ffffff'
         },
         allowTransparency: true,
-        fontFamily: 'Courier New, monospace',
+        fontFamily: 'Menlo, Monaco, "Courier New", monospace',
         fontSize: 14,
         scrollback: 1000
     });
