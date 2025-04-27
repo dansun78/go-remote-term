@@ -127,10 +127,19 @@ go-remote-term/
 └── go.sum               # Go module checksums
 ```
 
-## Dependencies
+## Third-Party Libraries
 
-- [github.com/gorilla/websocket](https://github.com/gorilla/websocket) - WebSocket implementation
-- [github.com/creack/pty](https://github.com/creack/pty) - Pseudo-terminal handling
+This project uses the following third-party libraries:
+
+### Backend (Go)
+- [github.com/gorilla/websocket](https://github.com/gorilla/websocket) - WebSocket implementation for Go (BSD 3-Clause License)
+- [github.com/creack/pty](https://github.com/creack/pty) - Pseudo-terminal handling for Go (MIT License)
+- [github.com/google/uuid](https://github.com/google/uuid) - UUID generation library (BSD 3-Clause License)
+
+### Frontend (JavaScript)
+- [xterm.js](https://github.com/xtermjs/xterm.js/) (v5.3.0) - A terminal emulator for the web (MIT License)
+- [xterm-addon-fit](https://github.com/xtermjs/xterm.js/) (v0.8.0) - An add-on for xterm.js that enables resizing the terminal (MIT License)
+- [Font Awesome](https://fontawesome.com/) (v6.5.1) - Icon library and toolkit (Free version uses MIT License for code, CC BY 4.0 License for icons, and SIL OFL 1.1 License for fonts)
 
 ## License
 
