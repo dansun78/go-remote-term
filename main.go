@@ -17,6 +17,7 @@ var (
 	AppName    = "go-remote-term"
 	AppVersion = "dev"     // Default to "dev" if not specified at build time
 	BuildDate  = "unknown" // Default to "unknown" if not specified at build time
+	GoVersion  = "unknown" // Go compiler version used for building
 )
 
 var (
@@ -34,7 +35,7 @@ func main() {
 
 	// Handle version flag
 	if *versionFlag {
-		fmt.Printf("%s v%s (built on %s)\n", AppName, AppVersion, BuildDate)
+		fmt.Printf("%s v%s (built on %s with %s)\n", AppName, AppVersion, BuildDate, GoVersion)
 		os.Exit(0)
 	}
 
