@@ -1,6 +1,6 @@
 # Go Remote Terminal
 
-A lightweight web-based terminal application that provides remote shell access via HTTP/HTTPS.
+A lightweight web-based terminal application that provides secure remote shell access via HTTP/HTTPS.
 
 ## Overview
 
@@ -10,7 +10,9 @@ Go Remote Terminal is a Go-based application that launches a shell and exposes i
 
 - Real PTY (Pseudo Terminal) support for proper terminal emulation
 - WebSocket-based communication for real-time interaction
-- Support for both HTTP and HTTPS connections
+- Token-based authentication system
+- Persistent terminal sessions with reconnection capability
+- Support for both HTTP and HTTPS connections (with automatic self-signed certificate generation)
 - Interactive web terminal interface
 - Single binary deployment with embedded web assets
 - Support for common terminal features:
@@ -45,10 +47,20 @@ go build -o go-remote-term
 ./go-remote-term
 ```
 
-By default, the server will start on port 8080 and only accept connections from localhost for security. You can access the terminal by opening a browser and navigating to:
+By default, the server will start on port 8080 and only accept connections from localhost for security. A random authentication token will be generated and displayed in the console. You can access the terminal by opening a browser and navigating to:
 
 ```
 http://localhost:8080
+```
+
+You will be prompted to enter the authentication token.
+
+### Using a custom authentication token
+
+To specify your own authentication token:
+
+```bash
+./go-remote-term -token="your-secure-token"
 ```
 
 ### Running with HTTP (allow remote connections)
@@ -96,35 +108,46 @@ If you don't provide certificate and key files with the -secure flag, the applic
 - `-key`: TLS key file path (for HTTPS)
 - `-secure`: Force HTTPS usage, generates self-signed cert if not provided (default: false)
 - `-insecure`: Allow connections from any host, not just localhost (default: false)
+- `-token`: Authentication token for accessing the terminal (if empty, a random token will be generated)
+- `-version`: Display version information
 
-## Security Considerations
+## Security Features
 
 The application includes built-in security measures:
 - HTTP access is restricted to localhost by default
-- Option to force HTTPS for all connections
+- Token-based authentication system
+- Login page for web access with token validation
+- Option to force HTTPS for all connections (with automatic self-signed certificate generation)
 - WebSocket connections follow the same security rules
+- Terminal sessions with timeout for inactive connections
 
 For production use, consider implementing additional security:
-- User authentication
-- Access control
+- Two-factor authentication 
+- Access control based on user roles
 - IP filtering beyond localhost restriction
-- Session timeouts
+- Audit logging
 
 ## Project Structure
 
 ```
 go-remote-term/
-├── assets.go            # Embeds static files into the binary
-├── main.go              # Application entry point
+├── assets.go             # Embeds static files into the binary
+├── build.sh              # Build script for different platforms
+├── main.go               # Application entry point
+├── version.conf          # Version configuration
 ├── internal/
+│   └── security/
+│       └── security.go   # Security implementation (auth, HTTPS)
+├── pkg/
 │   └── terminal/
-│       └── terminal.go  # Terminal handling and WebSocket logic
+│       └── terminal.go   # Terminal handling and WebSocket logic
 ├── static/
-│   ├── index.html       # Web interface HTML
-│   ├── style.css        # Terminal styling
-│   └── terminal.js      # Terminal frontend JavaScript
-├── go.mod               # Go module definition
-└── go.sum               # Go module checksums
+│   ├── index.html        # Terminal interface HTML
+│   ├── login.html        # Authentication page
+│   ├── style.css         # Terminal and login styling
+│   └── terminal.js       # Terminal frontend JavaScript
+├── go.mod                # Go module definition
+└── go.sum                # Go module checksums
 ```
 
 ## Third-Party Libraries
