@@ -95,11 +95,11 @@ func HandleWebSocketWithOptions(w http.ResponseWriter, r *http.Request, options 
 	}
 
 	// Handle WebSocket connection for this session
-	handleTerminalConnection(conn, session)
+	handleTerminalConnection(conn, session, isNewSession)
 }
 
 // handleTerminalConnection manages a WebSocket connection for an existing terminal session
-func handleTerminalConnection(conn *websocket.Conn, session *TerminalSession) {
+func handleTerminalConnection(conn *websocket.Conn, session *TerminalSession, isNewSession bool) {
 	// Wait group for connection handling goroutines
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -111,7 +111,18 @@ func handleTerminalConnection(conn *websocket.Conn, session *TerminalSession) {
 	go func() {
 		defer wg.Done()
 
-		lastSize := 0
+		// Initialize lastSize based on session type
+		// For new sessions, we want to show all output from the beginning (lastSize = 0)
+		// For reconnections, we've already sent the buffer, so we start from current size
+		session.Lock.Lock()
+		var lastSize int
+		if isNewSession {
+			lastSize = 0
+		} else {
+			lastSize = session.OutputBuffer.Len()
+		}
+		session.Lock.Unlock()
+
 		ticker := time.NewTicker(100 * time.Millisecond)
 		defer ticker.Stop()
 
