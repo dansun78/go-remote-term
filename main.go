@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
@@ -29,6 +30,32 @@ var (
 	token       = flag.String("token", "", "Authentication token for accessing the terminal (if empty, a random token will be generated)")
 	versionFlag = flag.Bool("version", false, "Display version information")
 )
+
+// SecurityAuthProvider adapts our security package to the terminal.AuthProvider interface
+type SecurityAuthProvider struct {
+	authToken string
+}
+
+// ValidataAuthToken implements the terminal.AuthProvider interface
+func (p *SecurityAuthProvider) ValidataAuthToken(token string) bool {
+	return token == p.authToken
+}
+
+// TerminalHandler creates a handler for terminal WebSocket connections
+func TerminalHandler(authToken string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Create terminal options with our auth provider
+		opts := terminal.DefaultOptions()
+		opts.AuthProvider = &SecurityAuthProvider{authToken: authToken}
+
+		// Store the token in request context for compatibility with existing code
+		ctx := context.WithValue(r.Context(), "auth_token", authToken)
+		r = r.WithContext(ctx)
+
+		// Handle the WebSocket connection with our configured options
+		terminal.HandleWebSocketWithOptions(w, r, opts)
+	}
+}
 
 func main() {
 	flag.Parse()
@@ -93,7 +120,9 @@ func main() {
 	http.Handle("/", security.Middleware(http.FileServer(http.FS(staticFS))))
 
 	// Terminal WebSocket handler with middleware for security
-	http.HandleFunc("/ws", security.Handler(terminal.HandleWebSocket))
+	// The security middleware will handle authentication, but we also pass the token
+	// to our TerminalHandler which will create the appropriate auth provider
+	http.HandleFunc("/ws", security.Handler(TerminalHandler(authToken)))
 
 	// Start the server
 	fmt.Printf("Starting remote terminal server on %s\n", *addr)
