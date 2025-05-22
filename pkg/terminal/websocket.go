@@ -11,12 +11,38 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// Default WebSocket upgrader with permissive CORS settings
+// AllowedOrigins stores the list of origins that are allowed to connect
+var AllowedOrigins = []string{
+	"http://localhost:8080",
+	"https://localhost:8080", // Match the default address regardless of protocol
+}
+
+// Default WebSocket upgrader with improved CORS settings
 // Applications can use their own upgrader by setting terminal.Upgrader
 var Upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
-		return true // Allow all connections by default
+		origin := r.Header.Get("Origin")
+
+		// If origin is empty, this might be a non-browser client or same-origin request
+		if origin == "" {
+			return true
+		}
+
+		// Check if the origin is in our allowed list
+		for _, allowedOrigin := range AllowedOrigins {
+			if origin == allowedOrigin {
+				return true
+			}
+		}
+
+		log.Printf("Rejected WebSocket connection from origin: %s", origin)
+		return false
 	},
+}
+
+// SetAllowedOrigins updates the list of origins allowed to connect
+func SetAllowedOrigins(origins []string) {
+	AllowedOrigins = origins
 }
 
 // HandleWebSocketWithOptions handles WebSocket connections for terminal sessions with custom options

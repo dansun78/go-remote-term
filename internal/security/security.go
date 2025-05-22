@@ -303,3 +303,79 @@ func EnsureLocalhostBinding(addr string) string {
 	fmt.Printf("Restricting HTTP to localhost only, binding to %s\n", localAddr)
 	return localAddr
 }
+
+// AllowedOrigins stores the list of origins that are allowed to connect
+var AllowedOrigins = []string{
+	"http://localhost:8080",
+	"https://localhost:8080", // Match the default address regardless of protocol
+}
+
+// SetAllowedOrigins updates the list of origins allowed to connect
+func SetAllowedOrigins(origins []string) {
+	AllowedOrigins = origins
+}
+
+// IsOriginAllowed checks if the given origin is in the allowed list
+func IsOriginAllowed(origin string) bool {
+	if origin == "" {
+		return true // Same origin or non-browser client
+	}
+
+	for _, allowedOrigin := range AllowedOrigins {
+		if origin == allowedOrigin {
+			return true
+		}
+	}
+	return false
+}
+
+// CORSMiddleware adds CORS headers to responses
+func CORSMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Get the Origin header
+		origin := r.Header.Get("Origin")
+
+		// Only add CORS headers if the origin is present (cross-origin request)
+		if origin != "" {
+			// Check if the origin is allowed
+			if IsOriginAllowed(origin) {
+				// Set CORS headers for allowed origins
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+				w.Header().Set("Access-Control-Allow-Credentials", "true")
+				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+				w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+
+				// Handle preflight requests
+				if r.Method == "OPTIONS" {
+					w.WriteHeader(http.StatusOK)
+					return
+				}
+			} else {
+				// For disallowed origins, don't add CORS headers
+				// This will cause browsers to block the request
+				if r.Method == "OPTIONS" {
+					http.Error(w, "CORS origin not allowed", http.StatusForbidden)
+					return
+				}
+			}
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+// SecureMiddleware combines security and CORS middlewares
+func SecureMiddleware(next http.Handler) http.Handler {
+	return CORSMiddleware(Middleware(next))
+}
+
+// SecureHandler combines security and CORS middlewares for http.HandlerFunc
+func SecureHandler(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		CORSMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if newRequest, ok := checkSecurity(w, r); ok {
+				next(w, newRequest)
+			}
+		})).ServeHTTP(w, r)
+	}
+}

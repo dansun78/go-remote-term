@@ -11,6 +11,7 @@ This package provides a WebSocket-based terminal implementation that can be inte
 - Authentication with token-based access control
 - Session persistence with reconnection support
 - Clean termination of processes
+- Flexible CORS configuration for multi-device access
 
 ## Package Structure
 
@@ -19,7 +20,7 @@ The terminal package is split into multiple files for better organization:
 - `models.go` - Type definitions, interfaces, and data structures
 - `auth.go` - Authentication functionality and token validation
 - `session.go` - Session management and terminal process handling
-- `websocket.go` - WebSocket connection management
+- `websocket.go` - WebSocket connection management and CORS configuration
 - `terminal.go` - Core public API functions
 - `utils.go` - Helper functions for terminal output processing
 
@@ -121,7 +122,7 @@ func main() {
 }
 ```
 
-### Custom WebSocket Settings
+### Custom CORS Configuration
 
 ```go
 package main
@@ -135,7 +136,13 @@ import (
 )
 
 func main() {
-	// Configure custom WebSocket upgrader with more restrictive CORS
+	// Set allowed origins for CORS
+	terminal.SetAllowedOrigins([]string{
+		"https://myapp.example.com",
+		"http://localhost:3000",
+	})
+
+	// Or configure the WebSocket upgrader directly for more control
 	terminal.Upgrader = websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool {
 			origin := r.Header.Get("Origin")
@@ -290,6 +297,28 @@ func main() {
 	if err := http.ListenAndServe(":8080", nil); err != nil {
 		log.Fatal("ListenAndServe:", err)
 	}
+}
+```
+
+## CORS Origin Settings
+
+The terminal package provides two ways to handle CORS for WebSocket connections:
+
+1. Using the `SetAllowedOrigins` function:
+```go
+terminal.SetAllowedOrigins([]string{
+    "http://localhost:3000",
+    "https://app.example.com",
+})
+```
+
+2. By directly setting the WebSocket upgrader:
+```go
+terminal.Upgrader = websocket.Upgrader{
+    CheckOrigin: func(r *http.Request) bool {
+        // Your custom CORS logic here
+        return true // Allow all origins
+    },
 }
 ```
 

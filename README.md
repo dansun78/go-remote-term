@@ -15,6 +15,8 @@ Go Remote Terminal is a Go-based application that launches a shell and exposes i
 - Support for both HTTP and HTTPS connections (with automatic self-signed certificate generation)
 - Interactive web terminal interface
 - Single binary deployment with embedded web assets
+- Automatic detection of network interfaces when binding to 0.0.0.0
+- Smart CORS configuration for multi-device access
 - Support for common terminal features:
   - Command history (arrow keys)
   - Tab completion
@@ -71,6 +73,16 @@ To allow connections from any host (not just localhost):
 ./go-remote-term -insecure
 ```
 
+### Binding to all network interfaces
+
+To bind the server to all network interfaces:
+
+```bash
+./go-remote-term -addr=0.0.0.0:8080 -insecure
+```
+
+When binding to 0.0.0.0, the server will automatically detect all local network IP addresses and add them to the allowed CORS origins, making it easier to access the terminal from other devices on your network.
+
 ### Running with HTTPS
 
 For secure connections, you need to provide TLS certificates:
@@ -109,6 +121,7 @@ If you don't provide certificate and key files with the -secure flag, the applic
 - `-secure`: Force HTTPS usage, generates self-signed cert if not provided (default: false)
 - `-insecure`: Allow connections from any host, not just localhost (default: false)
 - `-token`: Authentication token for accessing the terminal (if empty, a random token will be generated)
+- `-allowed-origins`: Comma-separated list of allowed origins for CORS (default: auto-detected based on address)
 - `-version`: Display version information
 
 ## Security Features
@@ -120,12 +133,23 @@ The application includes built-in security measures:
 - Option to force HTTPS for all connections (with automatic self-signed certificate generation)
 - WebSocket connections follow the same security rules
 - Terminal sessions with timeout for inactive connections
+- Advanced CORS configuration with automatic detection of local network addresses
 
 For production use, consider implementing additional security:
 - Two-factor authentication 
 - Access control based on user roles
 - IP filtering beyond localhost restriction
 - Audit logging
+
+## CORS Configuration
+
+When binding the server to all network interfaces (0.0.0.0), the application automatically detects all local IP addresses and adds them to the allowed CORS origins list. This makes it possible to access the terminal from any device on your local network.
+
+For production environments, you should explicitly set the allowed origins for better security:
+
+```bash
+./go-remote-term -addr=0.0.0.0:8080 -insecure -allowed-origins="https://example.com,https://admin.example.com"
+```
 
 ## Project Structure
 
@@ -136,6 +160,8 @@ go-remote-term/
 ├── main.go               # Application entry point
 ├── version.conf          # Version configuration
 ├── internal/
+│   ├── network/
+│   │   └── network.go    # Network utilities for IP detection
 │   └── security/
 │       └── security.go   # Security implementation (auth, HTTPS)
 ├── pkg/

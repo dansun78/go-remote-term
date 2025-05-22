@@ -7,7 +7,9 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 
+	"github.com/dansun78/go-remote-term/internal/network"
 	"github.com/dansun78/go-remote-term/internal/security"
 	"github.com/dansun78/go-remote-term/pkg/terminal"
 )
@@ -22,13 +24,14 @@ var (
 )
 
 var (
-	addr        = flag.String("addr", ":8080", "HTTP service address")
-	certFile    = flag.String("cert", "", "TLS cert file path")
-	keyFile     = flag.String("key", "", "TLS key file path")
-	secure      = flag.Bool("secure", false, "Force HTTPS usage (generates self-signed cert if not provided)")
-	insecure    = flag.Bool("insecure", false, "Allow connections from any host, not just localhost")
-	token       = flag.String("token", "", "Authentication token for accessing the terminal (if empty, a random token will be generated)")
-	versionFlag = flag.Bool("version", false, "Display version information")
+	addr           = flag.String("addr", ":8080", "HTTP service address")
+	certFile       = flag.String("cert", "", "TLS cert file path")
+	keyFile        = flag.String("key", "", "TLS key file path")
+	secure         = flag.Bool("secure", false, "Force HTTPS usage (generates self-signed cert if not provided)")
+	insecure       = flag.Bool("insecure", false, "Allow connections from any host, not just localhost")
+	token          = flag.String("token", "", "Authentication token for accessing the terminal (if empty, a random token will be generated)")
+	versionFlag    = flag.Bool("version", false, "Display version information")
+	allowedOrigins = flag.String("allowed-origins", "", "Comma-separated list of allowed origins for CORS (default: localhost URLs only)")
 )
 
 // SecurityAuthProvider adapts our security package to the terminal.AuthProvider interface
@@ -116,13 +119,107 @@ func main() {
 		log.Fatal("Failed to access static files: ", err)
 	}
 
+	// Configure CORS allowed origins
+	if *allowedOrigins != "" {
+		// User provided custom origins, use them directly
+		originsSlice := strings.Split(*allowedOrigins, ",")
+		for i, origin := range originsSlice {
+			originsSlice[i] = strings.TrimSpace(origin)
+		}
+
+		// We need to set allowed origins in both packages:
+		// - security package handles CORS for regular HTTP requests
+		// - terminal package handles CORS for WebSocket connections
+		// This separation maintains proper package boundaries without creating circular dependencies
+		terminal.SetAllowedOrigins(originsSlice)
+		security.SetAllowedOrigins(originsSlice)
+
+		fmt.Println("CORS allowed origins:", strings.Join(originsSlice, ", "))
+	} else {
+		// No custom origins provided, generate default based on configuration
+
+		defaultOrigins := []string{}
+
+		// Parse the address to determine hostname and port
+		hostname := "localhost" // Default hostname
+		port := "8080"          // Default port
+
+		if strings.Contains(*addr, ":") {
+			parts := strings.Split(*addr, ":")
+			if len(parts) > 1 {
+				port = parts[len(parts)-1]
+
+				// If a specific hostname is provided (not empty or 0.0.0.0), use it
+				if len(parts) > 1 && parts[0] != "" && parts[0] != "0.0.0.0" {
+					hostname = parts[0]
+				}
+			}
+		}
+
+		// Add origin for the configured hostname first
+		if *secure || *certFile != "" || *keyFile != "" {
+			// HTTPS mode
+			defaultOrigins = append(defaultOrigins, "https://"+hostname+":"+port)
+		} else {
+			// HTTP mode, potentially add both protocols
+			defaultOrigins = append(defaultOrigins, "http://"+hostname+":"+port)
+			// Also include HTTPS for compatibility with proxies
+			defaultOrigins = append(defaultOrigins, "https://"+hostname+":"+port)
+		}
+
+		// Handle special case for 0.0.0.0 (all interfaces)
+		// In this case, we need to provide more flexible CORS settings since
+		// users might access the application via various hostnames or IPs
+		if strings.HasPrefix(*addr, "0.0.0.0:") {
+			// When binding to all interfaces, we should inform the user that they may need
+			// to explicitly set allowed origins for proper security
+			log.Println("WARNING: Binding to all interfaces (0.0.0.0). For production use,")
+			log.Println("         consider explicitly setting allowed origins with --allowed-origins")
+
+			// Get all local IP addresses and add them to allowed origins
+			// This makes it possible to access the server from other devices on the network
+			localIPs, err := network.GetLocalIPAddresses()
+			if err != nil {
+				log.Printf("Error getting local IP addresses: %v", err)
+				log.Println("Only localhost origins will be allowed. Use --allowed-origins to add more.")
+			} else if len(localIPs) > 0 {
+				log.Printf("Found %d local IP addresses that can be used to access the server", len(localIPs))
+
+				// Create additional default origins for each local IP
+				for _, ip := range localIPs {
+					// Add both HTTP and HTTPS origins for each IP
+					if *secure || *certFile != "" || *keyFile != "" {
+						// Only add HTTPS for secure mode
+						defaultOrigins = append(defaultOrigins, "https://"+ip+":"+port)
+					} else {
+						// Add both for non-secure mode
+						defaultOrigins = append(defaultOrigins, "http://"+ip+":"+port)
+						defaultOrigins = append(defaultOrigins, "https://"+ip+":"+port)
+					}
+				}
+
+				// Log the additional origins so users know what's available
+				log.Println("The following local IPs can be used to access the server:")
+				for _, ip := range localIPs {
+					log.Printf("  - %s", ip)
+				}
+			}
+		}
+
+		// Set allowed origins for both WebSocket and HTTP endpoints
+		terminal.SetAllowedOrigins(defaultOrigins)
+		security.SetAllowedOrigins(defaultOrigins)
+
+		fmt.Println("CORS allowed origins:", strings.Join(defaultOrigins, ", "))
+	}
+
 	// Serve embedded static files with middleware for security
-	http.Handle("/", security.Middleware(http.FileServer(http.FS(staticFS))))
+	http.Handle("/", security.SecureMiddleware(http.FileServer(http.FS(staticFS))))
 
 	// Terminal WebSocket handler with middleware for security
 	// The security middleware will handle authentication, but we also pass the token
 	// to our TerminalHandler which will create the appropriate auth provider
-	http.HandleFunc("/ws", security.Handler(TerminalHandler(authToken)))
+	http.HandleFunc("/ws", security.SecureHandler(TerminalHandler(authToken)))
 
 	// Start the server
 	fmt.Printf("Starting remote terminal server on %s\n", *addr)
