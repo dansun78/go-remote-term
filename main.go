@@ -28,7 +28,7 @@ var (
 	certFile       = flag.String("cert", "", "TLS cert file path")
 	keyFile        = flag.String("key", "", "TLS key file path")
 	secure         = flag.Bool("secure", false, "Force HTTPS usage (generates self-signed cert if not provided)")
-	insecure       = flag.Bool("insecure", false, "Allow connections from any host, not just localhost")
+	insecure       = flag.Bool("insecure", false, "Disable localhost-only restriction for HTTP mode (allows remote connections)")
 	token          = flag.String("token", "", "Authentication token for accessing the terminal (if empty, a random token will be generated)")
 	versionFlag    = flag.Bool("version", false, "Display version information")
 	allowedOrigins = flag.String("allowed-origins", "", "Comma-separated list of allowed origins for CORS (default: localhost URLs only)")

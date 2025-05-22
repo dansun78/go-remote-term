@@ -119,7 +119,7 @@ If you don't provide certificate and key files with the -secure flag, the applic
 - `-cert`: TLS certificate file path (for HTTPS)
 - `-key`: TLS key file path (for HTTPS)
 - `-secure`: Force HTTPS usage, generates self-signed cert if not provided (default: false)
-- `-insecure`: Allow connections from any host, not just localhost (default: false)
+- `-insecure`: Disable localhost-only restriction for HTTP mode (allows remote connections) (default: false)
 - `-token`: Authentication token for accessing the terminal (if empty, a random token will be generated)
 - `-allowed-origins`: Comma-separated list of allowed origins for CORS (default: auto-detected based on address)
 - `-version`: Display version information

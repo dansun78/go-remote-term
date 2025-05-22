@@ -27,7 +27,7 @@ const TokenContextKey contextKey = "auth_token"
 
 // Config holds configuration options for security features
 type Config struct {
-	InsecureMode bool   // Allow connections from any host, not just localhost
+	InsecureMode bool   // Disable localhost-only restriction for HTTP mode (allows remote connections)
 	AuthToken    string // Authentication token for session access
 }
 
