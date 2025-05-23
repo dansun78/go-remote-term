@@ -9,8 +9,10 @@ import (
 	"os"
 	"strings"
 
+	"github.com/dansun78/go-remote-term/internal/logger"
 	"github.com/dansun78/go-remote-term/internal/network"
 	"github.com/dansun78/go-remote-term/internal/security"
+	"github.com/dansun78/go-remote-term/pkg/middleware"
 	"github.com/dansun78/go-remote-term/pkg/terminal"
 )
 
@@ -214,12 +216,23 @@ func main() {
 	}
 
 	// Serve embedded static files with middleware for security
-	http.Handle("/", security.SecureMiddleware(http.FileServer(http.FS(staticFS))))
+	// Using the new middleware chaining approach with explicit definitions
+	middlewareChain := []middleware.HandlerMiddleware{
+		logger.RequestLoggerMiddleware,
+		security.CORSMiddleware,
+		security.SecurityCheckMiddleware,
+	}
+	http.Handle("/", middleware.Chain(http.FileServer(http.FS(staticFS)), middlewareChain...))
 
 	// Terminal WebSocket handler with middleware for security
 	// The security middleware will handle authentication, but we also pass the token
 	// to our TerminalHandler which will create the appropriate auth provider
-	http.HandleFunc("/ws", security.SecureHandler(TerminalHandler(authToken)))
+	handlerMiddlewares := []middleware.FuncMiddleware{
+		middleware.ConvertToFuncMiddleware(logger.RequestLoggerMiddleware),
+		middleware.ConvertToFuncMiddleware(security.CORSMiddleware),
+		middleware.ConvertToFuncMiddleware(security.SecurityCheckMiddleware),
+	}
+	http.HandleFunc("/ws", middleware.ChainFunc(TerminalHandler(authToken), handlerMiddlewares...))
 
 	// Start the server
 	fmt.Printf("Starting remote terminal server on %s\n", *addr)

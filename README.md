@@ -17,6 +17,7 @@ Go Remote Terminal is a Go-based application that launches a shell and exposes i
 - Single binary deployment with embedded web assets
 - Automatic detection of network interfaces when binding to 0.0.0.0
 - Smart CORS configuration for multi-device access
+- Fiber-like middleware chaining for easy and understandable HTTP handler composition
 - Support for common terminal features:
   - Command history (arrow keys)
   - Tab completion
@@ -155,18 +156,34 @@ For production environments, you should explicitly set the allowed origins for b
 
 ```
 go-remote-term/
+├── .gitignore            # Git ignore rules
 ├── assets.go             # Embeds static files into the binary
 ├── build.sh              # Build script for different platforms
+├── LICENSE               # MIT License
 ├── main.go               # Application entry point
+├── Makefile              # Build automation
+├── README.md             # Project documentation
 ├── version.conf          # Version configuration
 ├── internal/
+│   ├── logger/
+│   │   └── logger.go     # Logging utilities and middleware
 │   ├── network/
 │   │   └── network.go    # Network utilities for IP detection
 │   └── security/
 │       └── security.go   # Security implementation (auth, HTTPS)
 ├── pkg/
+│   ├── middleware/
+│   │   ├── chain.go      # Middleware chaining implementation
+│   │   ├── chain_test.go # Unit tests for middleware chaining
+│   │   └── README.md     # Middleware documentation
 │   └── terminal/
-│       └── terminal.go   # Terminal handling and WebSocket logic
+│       ├── auth.go       # Authentication handling
+│       ├── models.go     # Data models and structures
+│       ├── session.go    # Terminal session management
+│       ├── terminal.go   # Core terminal handling and PTY
+│       ├── utils.go      # Utility functions
+│       ├── websocket.go  # WebSocket communication logic
+│       └── README.md     # Terminal package documentation
 ├── static/
 │   ├── index.html        # Terminal interface HTML
 │   ├── login.html        # Authentication page
@@ -197,3 +214,78 @@ This project is open source and available under the [MIT License](LICENSE).
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
+
+## Developer Guide
+
+### Middleware Chaining
+
+Go Remote Term uses a middleware chaining approach similar to the Fiber framework, making it easy to compose HTTP handlers with middleware:
+
+```go
+// Creating a middleware chain
+middlewareChain := []security.MiddlewareFunc{
+    logger.RequestLoggerMiddleware,
+    security.CORSMiddleware,
+    security.SecurityCheckMiddleware,
+}
+
+// Apply middleware chain to a handler
+http.Handle("/", security.Chain(http.FileServer(http.FS(staticFS)), middlewareChain...))
+
+// Working with handler functions
+handlerMiddlewares := []security.HandlerMiddlewareFunc{
+    security.ConvertToHandlerFunc(security.CORSMiddleware),
+    security.ConvertToHandlerFunc(security.Middleware),
+}
+http.HandleFunc("/path", security.ChainHandlerFunc(myHandlerFunc, handlerMiddlewares...))
+
+// Creating custom middleware chains
+customMiddleware := security.ChainMiddleware(
+    security.CORSMiddleware,
+    security.Middleware,
+    yourCustomMiddleware
+)
+http.Handle("/custom", security.Chain(yourHandler, customMiddleware...))
+```
+
+#### Creating Custom Middleware
+
+You can easily create and add your own custom middleware:
+
+```go
+// Creating a request logging middleware
+func RequestLoggerMiddleware(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        start := time.Now()
+        
+        // Call the next handler
+        next.ServeHTTP(w, r)
+        
+        // Log after handling the request
+        log.Printf("[%s] %s (took %v)", r.Method, r.URL.Path, time.Since(start))
+    })
+}
+
+// Middleware that accepts parameters - a rate limiter example
+func RateLimiterMiddleware(requestsPerMinute int) security.MiddlewareFunc {
+    clients := make(map[string]*client)
+    
+    return func(next http.Handler) http.Handler {
+        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+            // Rate limiting logic here...
+            next.ServeHTTP(w, r)
+        })
+    }
+}
+
+// Combining built-in and custom middleware
+myChain := security.ChainMiddleware(
+    RequestLoggerMiddleware,
+    RateLimiterMiddleware(60), // 60 requests per minute
+    security.CORSMiddleware
+)
+
+http.Handle("/api", security.Chain(apiHandler, myChain...))
+```
+
+This approach makes it easier to understand and manage middleware composition compared to nested function calls, especially when working with multiple middleware components.

@@ -245,22 +245,13 @@ func shouldRedirectToLogin(r *http.Request) bool {
 		!strings.HasSuffix(r.URL.Path, ".ico")
 }
 
-// Middleware adds security checks to http handlers
-func Middleware(next http.Handler) http.Handler {
+// SecurityCheckMiddleware adds security checks to http handlers
+func SecurityCheckMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if newRequest, ok := checkSecurity(w, r); ok {
 			next.ServeHTTP(w, newRequest)
 		}
 	})
-}
-
-// Handler adds security checks to http.HandlerFunc handlers
-func Handler(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if newRequest, ok := checkSecurity(w, r); ok {
-			next(w, newRequest)
-		}
-	}
 }
 
 // IsHTTPS checks if the request is using HTTPS
@@ -362,20 +353,4 @@ func CORSMiddleware(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, r)
 	})
-}
-
-// SecureMiddleware combines security and CORS middlewares
-func SecureMiddleware(next http.Handler) http.Handler {
-	return CORSMiddleware(Middleware(next))
-}
-
-// SecureHandler combines security and CORS middlewares for http.HandlerFunc
-func SecureHandler(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		CORSMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if newRequest, ok := checkSecurity(w, r); ok {
-				next(w, newRequest)
-			}
-		})).ServeHTTP(w, r)
-	}
 }
