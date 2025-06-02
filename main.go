@@ -220,7 +220,7 @@ func main() {
 	middlewareChain := []middleware.HandlerMiddleware{
 		logger.RequestLoggerMiddleware,
 		security.CORSMiddleware,
-		security.SecurityCheckMiddleware,
+		security.AuthenticateMiddleware,
 	}
 	http.Handle("/", middleware.Chain(http.FileServer(http.FS(staticFS)), middlewareChain...))
 
@@ -230,7 +230,7 @@ func main() {
 	handlerMiddlewares := []middleware.FuncMiddleware{
 		middleware.ConvertToFuncMiddleware(logger.RequestLoggerMiddleware),
 		middleware.ConvertToFuncMiddleware(security.CORSMiddleware),
-		middleware.ConvertToFuncMiddleware(security.SecurityCheckMiddleware),
+		middleware.ConvertToFuncMiddleware(security.AuthenticateMiddleware),
 	}
 	http.HandleFunc("/ws", middleware.ChainFunc(TerminalHandler(authToken), handlerMiddlewares...))
 

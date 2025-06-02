@@ -1,7 +1,6 @@
 package security
 
 import (
-	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -11,7 +10,6 @@ import (
 	"fmt"
 	"math/big"
 	"net"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -37,6 +35,18 @@ var config Config
 // SetConfig updates the security configuration
 func SetConfig(cfg Config) {
 	config = cfg
+}
+
+// AllowedOrigins stores the list of origins that are allowed to connect and is used for CORS. They are initialized to allow localhost URLs by default.
+// This can be updated by the SetAllowedOrigins function.
+var AllowedOrigins = []string{
+	"http://localhost:8080",
+	"https://localhost:8080", // Match the default address regardless of protocol
+}
+
+// SetAllowedOrigins updates the list of origins allowed to connect
+func SetAllowedOrigins(origins []string) {
+	AllowedOrigins = origins
 }
 
 // GetAuthToken returns the configured authentication token
@@ -141,134 +151,6 @@ func GenerateSelfSignedCert() (string, string, error) {
 	return certFile, keyFile, nil
 }
 
-// checkSecurity verifies if the request should be allowed based on security settings
-func checkSecurity(w http.ResponseWriter, r *http.Request) (*http.Request, bool) {
-	// If insecure flag is not set and we're using HTTP, check if request is from localhost
-	if !config.InsecureMode && !IsHTTPS(r) && !IsLocalhost(r) {
-		http.Error(w, "HTTP access restricted to localhost only", http.StatusForbidden)
-		return r, false
-	}
-
-	// Store current token in request context for other handlers to access
-	ctx := context.WithValue(r.Context(), TokenContextKey, config.AuthToken)
-	r = r.WithContext(ctx)
-
-	// If auth token is set, validate it
-	if config.AuthToken != "" {
-		// For WebSocket endpoints, don't check credentials here
-		// We'll validate them after the WebSocket connection is established
-		if strings.HasPrefix(r.URL.Path, "/ws") {
-			// For WebSocket, we'll validate in the WebSocket handler
-			return r, true
-		}
-
-		// For API endpoints, check Authorization header
-		authHeader := r.Header.Get("Authorization")
-		if strings.HasPrefix(r.URL.Path, "/api") {
-			if authHeader != "Bearer "+config.AuthToken {
-				http.Error(w, "Unauthorized: Invalid or missing token", http.StatusUnauthorized)
-				return r, false
-			}
-			return r, true
-		}
-
-		// For web UI, check token parameter in URL or cookie
-		tokenParam := r.URL.Query().Get("token")
-		tokenCookie, err := r.Cookie("auth_token")
-
-		// For specific login page, allow access without token
-		if r.URL.Path == "/login.html" {
-			return r, true
-		}
-
-		// For static resources needed by login page, allow access
-		if r.URL.Path == "/style.css" {
-			return r, true
-		}
-
-		// Check if token is valid
-		isValidToken := (tokenParam == config.AuthToken || (err == nil && tokenCookie.Value == config.AuthToken))
-
-		// If token is invalid, redirect to login page with error message
-		if !isValidToken {
-			// If it's a user-facing HTML request, redirect to login page with error
-			if shouldRedirectToLogin(r) {
-				// If an invalid token was explicitly provided (not just missing), show an error
-				if tokenParam != "" || (err == nil && tokenCookie.Value != "") {
-					http.Redirect(w, r, "/login.html?error=unauthorized", http.StatusFound)
-				} else {
-					// If token is just missing, redirect without error message
-					http.Redirect(w, r, "/login.html", http.StatusFound)
-				}
-			} else {
-				// For API requests or non-HTML resources, return standard 401 Unauthorized
-				http.Error(w, "Unauthorized: Invalid or missing token", http.StatusUnauthorized)
-			}
-			return r, false
-		}
-
-		// If token is valid, set it as a cookie for future requests
-		if tokenParam == config.AuthToken {
-			http.SetCookie(w, &http.Cookie{
-				Name:     "auth_token",
-				Value:    config.AuthToken,
-				HttpOnly: true,
-				Secure:   IsHTTPS(r),
-				Path:     "/",
-				MaxAge:   3600 * 24, // 1 day
-			})
-		}
-	}
-
-	return r, true
-}
-
-// shouldRedirectToLogin determines if a request should be redirected to login
-// based on the request type and headers
-func shouldRedirectToLogin(r *http.Request) bool {
-	// If it's an AJAX request or API call, don't redirect
-	if r.Header.Get("X-Requested-With") == "XMLHttpRequest" {
-		return false
-	}
-
-	// Check Accept header to see if browser is expecting HTML
-	accept := r.Header.Get("Accept")
-	if strings.Contains(accept, "text/html") {
-		return true
-	}
-
-	// Browser initiated requests for pages typically need redirects
-	return r.Method == "GET" && !strings.HasSuffix(r.URL.Path, ".js") &&
-		!strings.HasSuffix(r.URL.Path, ".css") &&
-		!strings.HasSuffix(r.URL.Path, ".png") &&
-		!strings.HasSuffix(r.URL.Path, ".jpg") &&
-		!strings.HasSuffix(r.URL.Path, ".ico")
-}
-
-// SecurityCheckMiddleware adds security checks to http handlers
-func SecurityCheckMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if newRequest, ok := checkSecurity(w, r); ok {
-			next.ServeHTTP(w, newRequest)
-		}
-	})
-}
-
-// IsHTTPS checks if the request is using HTTPS
-func IsHTTPS(r *http.Request) bool {
-	return r.TLS != nil
-}
-
-// IsLocalhost checks if the request is coming from localhost
-func IsLocalhost(r *http.Request) bool {
-	host := r.Host
-	if strings.Contains(host, ":") {
-		host = strings.Split(host, ":")[0]
-	}
-
-	return host == "localhost" || host == "127.0.0.1" || host == "::1"
-}
-
 // EnsureLocalhostBinding makes sure the address is bound to localhost if insecure mode is not enabled
 // Returns the potentially modified address
 func EnsureLocalhostBinding(addr string) string {
@@ -293,64 +175,4 @@ func EnsureLocalhostBinding(addr string) string {
 	localAddr := "127.0.0.1:" + port
 	fmt.Printf("Restricting HTTP to localhost only, binding to %s\n", localAddr)
 	return localAddr
-}
-
-// AllowedOrigins stores the list of origins that are allowed to connect
-var AllowedOrigins = []string{
-	"http://localhost:8080",
-	"https://localhost:8080", // Match the default address regardless of protocol
-}
-
-// SetAllowedOrigins updates the list of origins allowed to connect
-func SetAllowedOrigins(origins []string) {
-	AllowedOrigins = origins
-}
-
-// IsOriginAllowed checks if the given origin is in the allowed list
-func IsOriginAllowed(origin string) bool {
-	if origin == "" {
-		return true // Same origin or non-browser client
-	}
-
-	for _, allowedOrigin := range AllowedOrigins {
-		if origin == allowedOrigin {
-			return true
-		}
-	}
-	return false
-}
-
-// CORSMiddleware adds CORS headers to responses
-func CORSMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Get the Origin header
-		origin := r.Header.Get("Origin")
-
-		// Only add CORS headers if the origin is present (cross-origin request)
-		if origin != "" {
-			// Check if the origin is allowed
-			if IsOriginAllowed(origin) {
-				// Set CORS headers for allowed origins
-				w.Header().Set("Access-Control-Allow-Origin", origin)
-				w.Header().Set("Access-Control-Allow-Credentials", "true")
-				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-				w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
-
-				// Handle preflight requests
-				if r.Method == "OPTIONS" {
-					w.WriteHeader(http.StatusOK)
-					return
-				}
-			} else {
-				// For disallowed origins, don't add CORS headers
-				// This will cause browsers to block the request
-				if r.Method == "OPTIONS" {
-					http.Error(w, "CORS origin not allowed", http.StatusForbidden)
-					return
-				}
-			}
-		}
-
-		next.ServeHTTP(w, r)
-	})
 }
