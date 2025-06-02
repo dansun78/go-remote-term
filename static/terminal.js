@@ -13,6 +13,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const maxReconnectAttempts = 5;
     let reconnectTimer = null;
     let isFullscreen = false;
+    let inputHandler = null; // Store reference to current input handler disposable to prevent duplicates
+    let resizeHandler = null; // Store reference to current resize handler disposable to prevent duplicates
+    
+    // NOTE: These handler references are critical to prevent duplicate event bindings
+    // which previously caused keystrokes to be sent multiple times when creating 
+    // new sessions after terminating old ones
     
     // Initialize xterm.js with colors matching our dark theme
     const term = new Terminal({
@@ -60,6 +66,36 @@ document.addEventListener('DOMContentLoaded', () => {
         const parts = value.split(`; ${name}=`);
         if (parts.length === 2) return parts.pop().split(';').shift();
         return null;
+    }
+    
+    // Helper function to cleanup terminal handlers and socket
+    function cleanupTerminalState() {
+        console.log("Cleaning up terminal state");
+        // Dispose of event handlers
+        if (inputHandler) {
+            inputHandler.dispose();
+            inputHandler = null;
+        }
+        if (resizeHandler) {
+            resizeHandler.dispose();
+            resizeHandler = null;
+        }
+    }
+    
+    // Helper function to fully reset connection state
+    function resetConnectionState() {
+        console.log("Resetting connection state");
+        cleanupTerminalState();
+        clearTimeout(reconnectTimer);
+        reconnectAttempts = 0;
+        
+        // Explicitly null out socket reference if it exists
+        if (socket) {
+            if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
+                socket.close(1000);
+            }
+            socket = null;
+        }
     }
     
     // Get token from URL parameters or cookie
@@ -155,77 +191,120 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Create WebSocket and connect to terminal
     function connectToTerminal(existingSessionId = null) {
-        // Close existing connection if any
-        if (socket) {
-            socket.close();
-        }
+        // Clean up any existing handlers
+        cleanupTerminalState();
         
-        // Get authentication token
-        const token = getAuthToken();
-        if (!token) {
-            statusDisplay.textContent = 'Authentication token missing';
-            statusDisplay.style.color = 'red';
-            updateConnectionIndicator('disconnected');
+        console.log("Connecting to terminal, existing session:", existingSessionId, "socket state:", socket ? socket.readyState : "no socket");
+        
+        // Close existing connection if any
+        if (socket && socket.readyState !== WebSocket.CLOSED) {
+            console.log("Closing existing socket connection...");
+            // Add a listener for the close event
+            const onSocketClose = () => {
+                console.log("Socket closed, now creating new connection");
+                socket.removeEventListener('close', onSocketClose);
+                setTimeout(() => createConnection(existingSessionId), 300);
+            };
+            
+            socket.addEventListener('close', onSocketClose);
+            socket.close(1000);
             return;
         }
         
-        // Get the current host and construct WebSocket URL
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsUrl = `${protocol}//${window.location.host}/ws`;
+        console.log("No active socket, creating connection immediately");
+        // Immediately create connection if no active socket
+        createConnection(existingSessionId);
         
-        // Update UI to show connecting state
-        statusDisplay.textContent = existingSessionId ? 'Reconnecting...' : 'Connecting...';
-        statusDisplay.style.color = 'orange';
-        updateConnectionIndicator('reconnecting');
-        newSessionBtn.disabled = true;
-        
-        // Clear the terminal if this is a new session
-        if (!existingSessionId) {
-            term.clear();
-        }
-        
-        // Create new WebSocket connection
-        try {
-            socket = new WebSocket(wsUrl);
-            
-            socket.onopen = () => {
-                // Send authentication token as first message after connection
-                // Include session ID if we're reconnecting to an existing session
-                const authMessage = {
-                    type: 'auth',
-                    token: token
-                };
-                
-                if (existingSessionId) {
-                    authMessage.session_id = existingSessionId;
-                }
-                
-                socket.send(JSON.stringify(authMessage));
-            };
-            
-            socket.onclose = (event) => {
-                const normalClose = event.code === 1000 || event.code === 1001;
-                newSessionBtn.disabled = false;
-                terminateBtn.disabled = true;
-                
-                // If we have a session ID and this wasn't a normal close, try to reconnect
-                if (sessionId && !normalClose) {
-                    scheduleReconnect();
-                } else {
-                    statusDisplay.textContent = normalClose ? 'Disconnected' : `Connection closed: ${event.code}`;
-                    statusDisplay.style.color = 'red';
-                    updateConnectionIndicator('disconnected');
-                }
-            };
-            
-            socket.onerror = (error) => {
-                console.error('WebSocket error:', error);
-                statusDisplay.textContent = 'Connection error';
+        function createConnection(sessionId) {
+            // Get authentication token
+            const token = getAuthToken();
+            if (!token) {
+                statusDisplay.textContent = 'Authentication token missing';
                 statusDisplay.style.color = 'red';
                 updateConnectionIndicator('disconnected');
-            };
+                return;
+            }
             
-            socket.onmessage = (event) => {
+            // Get the current host and construct WebSocket URL
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/ws`;
+            
+            // Update UI to show connecting state
+            statusDisplay.textContent = sessionId ? 'Reconnecting...' : 'Connecting...';
+            statusDisplay.style.color = 'orange';
+            updateConnectionIndicator('reconnecting');
+            newSessionBtn.disabled = true;
+            
+            // Clear the terminal if this is a new session
+            if (!sessionId) {
+                term.clear();
+            }
+            
+            try {
+                socket = new WebSocket(wsUrl);
+                
+                // Reset any socket flags used for state tracking
+                socket._forceClosing = false;
+                socket._forCreatingNewSession = false;
+                
+                socket.onopen = () => {
+                    // Send authentication token as first message after connection
+                    // Include session ID if we're reconnecting to an existing session
+                    const authMessage = {
+                        type: 'auth',
+                        token: token
+                    };
+                    
+                    if (sessionId) {  // Use the passed sessionId parameter
+                        authMessage.session_id = sessionId;
+                    }
+                    
+                    socket.send(JSON.stringify(authMessage));
+                };
+                
+                socket.onclose = (event) => {
+                    console.log("WebSocket closed with code:", event.code, "reason:", event.reason);
+                    const normalClose = event.code === 1000 || event.code === 1001;
+                    
+                    // Update button states
+                    terminateBtn.disabled = true;
+                    
+                    // Clean up event handlers on socket close to prevent duplicates on reconnection
+                    cleanupTerminalState();
+                    
+                    // Check if we're in the middle of termination process or creating a new session
+                    if (socket && (socket._forceClosing || socket._forCreatingNewSession)) {
+                        console.log("Socket intentionally closed:", 
+                                   socket._forceClosing ? "forced termination" : "for new session");
+                        // Don't reconnect, we're intentionally closing 
+                        // (either for termination or to create a new session)
+                        newSessionBtn.disabled = false;
+                        return;
+                    }
+                    
+                    // If we have a session ID and this wasn't a normal close, try to reconnect
+                    // unless sessionId has been cleared (which indicates an intentional termination)
+                    if (sessionId && !normalClose) {
+                        console.log("Abnormal close with active session - scheduling reconnect");
+                        scheduleReconnect();
+                    } else {
+                        console.log("Normal close or no session - enabling new session button");
+                        // Enable new session button for normal closes or when session is already null
+                        newSessionBtn.disabled = false;
+                        statusDisplay.textContent = normalClose ? 'Disconnected' : `Connection closed: ${event.code}`;
+                        statusDisplay.style.color = 'red';
+                        updateConnectionIndicator('disconnected');
+                    }
+                };
+                
+                socket.onerror = (error) => {
+                    console.error('WebSocket error:', error);
+                    statusDisplay.textContent = 'Connection error';
+                    statusDisplay.style.color = 'red';
+                    updateConnectionIndicator('disconnected');
+                };
+                
+                socket.onmessage = (event) => {
                 try {
                     // First check if this is a JSON message from our PTY output buffer hack
                     // which will be wrapped in <JSON>...</JSON> tags
@@ -242,6 +321,16 @@ document.addEventListener('DOMContentLoaded', () => {
                             term.write('\r\n\x1b[31mShell process has exited. Session terminated.\x1b[0m\r\n');
                             statusDisplay.textContent = 'Shell exited';
                             statusDisplay.style.color = 'orange';
+                            
+                            // Clean up event handlers when shell process exits
+                            if (inputHandler) {
+                                inputHandler.dispose();
+                                inputHandler = null;
+                            }
+                            if (resizeHandler) {
+                                resizeHandler.dispose();
+                                resizeHandler = null;
+                            }
                             
                             // Clear saved session
                             clearSavedSession();
@@ -300,7 +389,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         reconnectAttempts = 0;
                         clearTimeout(reconnectTimer);
                         
-                        statusDisplay.textContent = existingSessionId ? 'Reconnected' : 'Connected';
+                        statusDisplay.textContent = sessionId ? 'Reconnected' : 'Connected';
                         statusDisplay.style.color = 'green';
                         updateConnectionIndicator('connected');
                         
@@ -312,11 +401,33 @@ document.addEventListener('DOMContentLoaded', () => {
                     // Add handling for terminate_response
                     else if (data.type === 'terminate_response') {
                         if (data.success) {
-                            console.log("Session successfully terminated");
+                            console.log("Session successfully terminated by server");
+                            
+                            // Clean up event handlers when session is successfully terminated
+                            cleanupTerminalState();
                             
                             // Clear session since it's now terminated
                             clearSavedSession();
                             sessionId = null;
+                            
+                            // Update UI state now that termination is confirmed
+                            statusDisplay.textContent = 'Session terminated';
+                            statusDisplay.style.color = 'red';
+                            updateConnectionIndicator('disconnected');
+                            newSessionBtn.disabled = false;
+                            terminateBtn.disabled = true;
+                            
+                            // Show message in terminal
+                            term.write('\r\n\x1b[33mSession terminated by user\x1b[0m\r\n');
+                            
+                            // Close the WebSocket connection with a delay
+                            setTimeout(() => {
+                                if (socket && socket.readyState === WebSocket.OPEN) {
+                                    console.log("Closing connection after successful termination");
+                                    socket._forceClosing = true;
+                                    socket.close(1000);
+                                }
+                            }, 200);
                         }
                         return; // Don't process as terminal output
                     }
@@ -328,6 +439,16 @@ document.addEventListener('DOMContentLoaded', () => {
                         term.write('\r\n\x1b[31mShell process has exited. Session terminated.\x1b[0m\r\n');
                         statusDisplay.textContent = 'Shell exited';
                         statusDisplay.style.color = 'orange';
+                        
+                        // Clean up event handlers when shell process exits
+                        if (inputHandler) {
+                            inputHandler.dispose();
+                            inputHandler = null;
+                        }
+                        if (resizeHandler) {
+                            resizeHandler.dispose();
+                            resizeHandler = null;
+                        }
                         
                         // Clear saved session
                         clearSavedSession();
@@ -354,15 +475,26 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             };
             
-            // Handle terminal input
-            term.onData(data => {
+            // Clean up previous event handlers if they exist
+            if (inputHandler) {
+                inputHandler.dispose();
+                inputHandler = null;
+            }
+            if (resizeHandler) {
+                resizeHandler.dispose();
+                resizeHandler = null;
+            }
+            
+            // Create new handlers and store their disposables
+            // Note: term.onData and term.onResize return disposable objects
+            inputHandler = term.onData(data => {
                 if (socket && socket.readyState === WebSocket.OPEN) {
                     socket.send(data);
                 }
             });
             
-            // Handle terminal resize
-            term.onResize(size => {
+            // Create new resize handler
+            resizeHandler = term.onResize(size => {
                 if (socket && socket.readyState === WebSocket.OPEN && sessionId) {
                     socket.send(JSON.stringify({
                         type: 'resize',
@@ -378,6 +510,7 @@ document.addEventListener('DOMContentLoaded', () => {
             statusDisplay.style.color = 'red';
             updateConnectionIndicator('disconnected');
             newSessionBtn.disabled = false;
+        }
         }
     }
     
@@ -469,6 +602,8 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Handle session termination
     terminateBtn.addEventListener('click', () => {
+        console.log("Terminate button clicked");
+        
         // Clear reconnection logic
         clearTimeout(reconnectTimer);
         reconnectAttempts = 0;
@@ -478,7 +613,17 @@ document.addEventListener('DOMContentLoaded', () => {
             statusDisplay.textContent = 'Terminating session...';
             statusDisplay.style.color = 'orange';
             
+            // Temporarily disable the new session button until termination completes
+            newSessionBtn.disabled = true;
+            
+            // Add a listener to ensure we can create a new session once current one is fully closed
+            socket.addEventListener('close', () => {
+                console.log("Socket closed after termination");
+                newSessionBtn.disabled = false;
+            }, { once: true });
+            
             // Send termination request
+            console.log("Sending termination request for session:", sessionId);
             socket.send(JSON.stringify({
                 type: 'terminate',
                 sessionID: sessionId
@@ -487,43 +632,90 @@ document.addEventListener('DOMContentLoaded', () => {
             // Set a timeout to close the socket if the server doesn't respond
             setTimeout(() => {
                 if (socket && socket.readyState === WebSocket.OPEN) {
+                    console.log("Termination response timeout - force closing");
+                    // Store a flag to indicate we're force-closing
+                    socket._forceClosing = true;
                     socket.close(1000, 'Session terminated by user');
+                    
+                    // Only if we had to force-close, update UI here
+                    statusDisplay.textContent = 'Session terminated (forced)';
+                    statusDisplay.style.color = 'red';
+                    updateConnectionIndicator('disconnected');
+                    newSessionBtn.disabled = false;
+                    terminateBtn.disabled = true;
+                    
+                    // Clear session info since it's now terminated
+                    clearSavedSession();
+                    sessionId = null;
                 }
             }, 1000);
+            
+            // Note: We don't update UI state or clear session here
+            // This will be done when we receive the terminate_response
         } else if (socket) {
             // Just close the socket if no session
             socket.close(1000, 'User disconnected');
+            
+            // Reset UI immediately in this case
+            statusDisplay.textContent = 'Disconnected';
+            statusDisplay.style.color = 'red';
+            updateConnectionIndicator('disconnected');
+            newSessionBtn.disabled = false;
+            terminateBtn.disabled = true;
+            
+            // Clear session info
+            clearSavedSession();
+            sessionId = null;
         }
-        
-        // Reset UI
-        statusDisplay.textContent = 'Session terminated';
-        statusDisplay.style.color = 'red';
-        updateConnectionIndicator('disconnected');
-        newSessionBtn.disabled = false;
-        terminateBtn.disabled = true;
-        
-        // Clear session info since it's now terminated
-        clearSavedSession();
-        sessionId = null;
     });
     
     // Handle new session creation
     newSessionBtn.addEventListener('click', () => {
+        console.log("New session button clicked");
+        
         // Clear saved session
         clearSavedSession();
         sessionId = null;
         
-        // Clear reconnection logic
-        clearTimeout(reconnectTimer);
-        reconnectAttempts = 0;
+        // Reset connection state completely
+        resetConnectionState();
         
-        // Close current socket
-        if (socket) {
+        // Set status immediately so user knows something is happening
+        statusDisplay.textContent = 'Creating new session...';
+        statusDisplay.style.color = 'orange';
+        
+        // If there's an existing socket, close it properly first
+        if (socket && socket.readyState !== WebSocket.CLOSED) {
+            console.log("Closing existing socket before creating new session");
+            socket._forCreatingNewSession = true;
+            
+            // Set flag to indicate we're explicitly closing this socket for a new session
+            socket._forCreatingNewSession = true;
+            
+            // Register one-time close listener
+            const createNewSession = () => {
+                console.log("Socket closed, now creating new session");
+                
+                // Remove the event listener to prevent memory leaks
+                if (socket) {
+                    socket.removeEventListener('close', createNewSession);
+                }
+                
+                // Completely reset the socket
+                socket = null;
+                
+                // Add delay to ensure WebSocket state is fully cleaned up
+                setTimeout(() => connectToTerminal(null), 500);
+            };
+            
+            // Add the listener and close the socket
+            socket.addEventListener('close', createNewSession, { once: true });
             socket.close(1000, 'Starting new session');
+        } else {
+            console.log("No active socket, creating new session immediately");
+            // If no socket or already closed, connect immediately
+            connectToTerminal(null);
         }
-        
-        // Connect with no session ID to get a fresh session
-        connectToTerminal();
     });
     
     // Handle beforeunload event to warn about active sessions
